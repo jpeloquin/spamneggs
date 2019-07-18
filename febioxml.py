@@ -1,3 +1,4 @@
+from itertools import product
 import os
 from pathlib import Path
 import pandas as pd
@@ -29,14 +30,25 @@ def make_sensitivity_cases(tree, nlevels):
     cases = []
     # Remove the <preprocessor> element b/c FEBio can't handle extra elements
     tree.getroot().remove(tree.find("preprocessor"))
-    # Process variables
-    scalars = tree.findall(".//scalar")
-    for e_scalar in scalars:
+    # Remove the <scalar> elements from the tree and generate levels for
+    # each.  We need an FEBio-compatible tree before we can write the
+    # XML for each combination of levels, so that must be done later in
+    # a separate loop.
+    e_scalars = tree.findall(".//scalar")
+    e_parents = {}
+    colnames = []
+    levels = {}
+    for e_scalar in e_scalars:
+        # Remember the parent element
+        e_parents[e_scalar] = e_scalar.getparent()
+        # Remove the <scalar> element to leave an FEBio-compatible tree
+        e_scalar.getparent().remove(e_scalar)
         # Get / make up name for variable
         try:
             varname = e_scalar.attrib["varname"]
         except KeyError:
-            varname = tree.getelementpath(e_scalar.getparent())
+            varname = tree.getelementpath(e_parents[e_scalar])
+        colnames.append(varname)
         # Get nominal value
         e_nominal = e_scalar.find("nominal")
         if e_nominal is None:
@@ -45,18 +57,21 @@ def make_sensitivity_cases(tree, nlevels):
             # A nominal value is defined
             nominal = _to_number(e_nominal.text)
         scalar = scalar_from_xml(e_scalar, nominal=nominal, name=varname)
-        # Remove the <scalar> element from the tree
-        e_parent = e_scalar.getparent()
-        e_scalar.getparent().remove(e_scalar)
-        # Generate and store each level for the variable
-        for v in scalar.sensitivity_levels(nlevels):
-            e_parent.text = str(v)
-            cases.append({"variable": varname,
-                          "value": v,
-                          "xml": etree.tostring(tree,
-                                                pretty_print=True,
-                                                xml_declaration=True,
-                                                encoding="utf-8")})
+        # Calculate variable's levels
+        levels[varname] = scalar.sensitivity_levels(nlevels)
+    cases = pd.DataFrame({k: v for k, v in zip(colnames,
+                                               zip(*product(*(levels[k]
+                                                              for k in colnames))))})
+    # Process variables
+    xml_data = []
+    for i, case in cases.iterrows():
+        for e_scalar, colname in zip(e_scalars, colnames):
+            e_parents[e_scalar].text = str(case[colname])
+        xml_data.append(etree.tostring(tree,
+                                       pretty_print=True,
+                                       xml_declaration=True,
+                                       encoding="utf-8"))
+    cases["xml"] = xml_data
     cases = pd.DataFrame(cases)
     return cases
 
@@ -84,7 +99,7 @@ def write_cases(cases, analysis_name, path_prefix="."):
             f.write(row["xml"])
         case_files.append(fname)
     # Replace XML bytes with file paths
-    manifest = cases[['variable', 'value']]
-    manifest['path'] = fname
+    manifest = cases[[c for c in cases.columns if c != "xml"]]
+    manifest['path'] = case_files
     manifest.to_csv(dir_out / f"{analysis_name}_manifest.csv",
                     index_label="case")
