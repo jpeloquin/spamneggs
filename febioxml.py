@@ -45,7 +45,7 @@ def make_sensitivity_cases(tree, nlevels):
         e_scalar.getparent().remove(e_scalar)
         # Get / make up name for variable
         try:
-            varname = e_scalar.attrib["varname"]
+            varname = e_scalar.attrib["name"]
         except KeyError:
             varname = tree.getelementpath(e_parents[e_scalar])
         colnames.append(varname)
