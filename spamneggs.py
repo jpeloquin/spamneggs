@@ -2,35 +2,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from warnings import warn
-
-
-class Scalar:
-
-    def __init__(self, name=None, nominal=None):
-        self.name = name
-        self.nominal = nominal
-
-
-class UniformScalar(Scalar):
-
-    def __init__(self, lb, ub, **kwargs):
-        super().__init__(**kwargs)
-        self.lb = lb
-        self.ub = ub
-
-    def sensitivity_levels(self, n):
-        if self.nominal is not None:
-            # There is a nominal value; include it
-            if not n % 2 == 1:
-                nm = self.name if self.name is not None else "UniformScalar"
-                warn(f"{nm} has a nominal value ({self.nominal}).  To include a nominal value in a sensitivity analysis, the number of levels must be odd.  {n+1} levels will be used instead of the requested {n} levels.")
-                n = n + 1
-            levels = np.hstack([np.linspace(self.lb, self.nominal, n // 2 + 1),
-                                np.linspace(self.nominal, self.ub, n // 2 +1)[1:]])
-        else:
-            # There is no nominal value, so return evenly spaced levels
-            levels = np.linspace(self.lb, self.ub, n)
-        return levels
+from .variables import *
 
 
 def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,

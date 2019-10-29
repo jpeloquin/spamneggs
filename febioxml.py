@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import pandas as pd
 from lxml import etree
-from .spamneggs import UniformScalar
+from .variables import *
 
 
 def _to_number(s):
@@ -14,13 +14,26 @@ def _to_number(s):
         return float(s)
 
 
-def scalar_from_xml(element, **kwargs):
+def _maybe_to_number(s):
+    """Convert string to number if possible, otherwise return string."""
+    try:
+        return _to_number(s)
+    except ValueError:
+        return s
+
+
+def scalar_from_xml(element, nominal=None, **kwargs):
     """Return Scalar object given an FEBio XML element."""
     dist = element.find("distribution")
     if dist.attrib["type"] == "uniform":
         lb = _to_number(dist.find("lb").text)
         ub = _to_number(dist.find("ub").text)
-        return UniformScalar(lb, ub, **kwargs)
+        if nominal is not None:
+            nominal = _to_number(nominal)
+        return UniformScalar(lb, ub, nominal=nominal, **kwargs)
+    elif dist.attrib["type"] == "categorical":
+        levels = (e.text for e in dist.findall("levels/level"))
+        return CategoricalScalar(levels, nominal=nominal, **kwargs)
     else:
         raise ValueError(f"Distribution type '{dist.attrib['type']}' not yet supported.")
 
@@ -54,11 +67,15 @@ def make_sensitivity_cases(tree, nlevels):
         if e_nominal is None:
             nominal = None
         else:
-            # A nominal value is defined
-            nominal = _to_number(e_nominal.text)
+            nominal = e_nominal.text.strip()
         scalar = scalar_from_xml(e_scalar, nominal=nominal, name=varname)
         # Calculate variable's levels
-        levels[varname] = scalar.sensitivity_levels(nlevels)
+        if isinstance(scalar, ContinuousScalar):
+            levels[varname] = scalar.sensitivity_levels(nlevels)
+        elif isinstance(scalar, CategoricalScalar):
+            levels[varname] = scalar.sensitivity_levels()
+        else:
+            raise ValueError(f"Generating levels from a variable of type `{type(scalar)}` is not yet supported.")
     cases = pd.DataFrame({k: v for k, v in zip(colnames,
                                                zip(*product(*(levels[k]
                                                               for k in colnames))))})
