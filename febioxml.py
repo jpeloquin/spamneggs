@@ -97,7 +97,7 @@ def sensitivity_analysis(f, nlevels, path_prefix="."):
     """Return table of cases for sensitivity analysis."""
     parser = etree.XMLParser(remove_blank_text=True)
     tree = etree.parse(f, parser)
-    analysis_name = tree.find("preprocessor[@name='spamneggs']/"
+    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
                               "analysis[@type='sensitivity']").attrib["name"]
     cases = make_sensitivity_cases(tree, nlevels)
     write_cases(cases, analysis_name, path_prefix=path_prefix)
