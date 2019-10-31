@@ -38,24 +38,42 @@ def scalar_from_xml(element, nominal=None, **kwargs):
         raise ValueError(f"Distribution type '{dist.attrib['type']}' not yet supported.")
 
 
+def strip_preprocessor_elems(tree):
+    """Remove preprocessor elements from extended FEBio XML.
+
+    The input tree is mutated in-place.
+
+    """
+    # Remove the <preprocessor> element b/c FEBio can't handle extra elements
+    tree.getroot().remove(tree.find("preprocessor"))
+    # Remove the <scalar> elements from the tree.
+    for e in tree.findall(".//scalar"):
+        parent = e.getparent()
+        e_nominal = e.find("nominal")
+        if e_nominal is None:
+            raise ValueError(f"Element `{tree.getelementpath(parent)}` in file `{tree.base}` has no nominal value defined.")
+        else:
+            nominal = e_nominal.text.strip()
+        parent.remove(e)
+        parent.text = nominal
+
+
 def make_sensitivity_cases(tree, nlevels):
     """Return table of cases for sensitivity analysis."""
     cases = []
-    # Remove the <preprocessor> element b/c FEBio can't handle extra elements
-    tree.getroot().remove(tree.find("preprocessor"))
-    # Remove the <scalar> elements from the tree and generate levels for
-    # each.  We need an FEBio-compatible tree before we can write the
-    # XML for each combination of levels, so that must be done later in
-    # a separate loop.
+    # Find all the variable parameters (at the moment, just <scalar>
+    # elements) in the tree, and remember their positions in the tree by
+    # storing the parent element of each.
     e_scalars = tree.findall(".//scalar")
     e_parents = {}
+    for e_scalar in e_scalars:
+        e_parents[e_scalar] = e_scalar.getparent()
+    # Remove all the preprocessor elements; FEBio can't handle them
+    strip_preprocessor_elems(tree)
+    # Generate levels for each variable parameter
     colnames = []
     levels = {}
     for e_scalar in e_scalars:
-        # Remember the parent element
-        e_parents[e_scalar] = e_scalar.getparent()
-        # Remove the <scalar> element to leave an FEBio-compatible tree
-        e_scalar.getparent().remove(e_scalar)
         # Get / make up name for variable
         try:
             varname = e_scalar.attrib["name"]
