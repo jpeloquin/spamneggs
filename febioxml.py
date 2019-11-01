@@ -1,7 +1,9 @@
 from itertools import product
+from math import inf
 import os
 from pathlib import Path
 import pandas as pd
+import re
 from lxml import etree
 # In-house packages
 from febtools.input import read_febio_xml
@@ -24,6 +26,45 @@ def _maybe_to_number(s):
         return _to_number(s)
     except ValueError:
         return s
+
+
+def parse_var_selector(text):
+    """Parse the parts of a variable selector for plotfiles and logfiles."""
+    var_info = {"entity": None,  # element, node, connector, or body
+                "entity_id": None,  # integer
+                "variable": "",
+                "type": "",  # instantaneous or time series
+                "time_enum": None,  # time, step, or (if all time
+                                    # points) None
+                "time": None}
+    groups = text.strip().split("@")
+    entity_text = groups[0].rstrip()
+    m_entity = re.match("(?P<entity>element|node|connector|body)"
+                        "\[(?P<entity_id>\d+)\]"
+                        "\[(\'|\"){1}(?P<variable>[^\'\"]+)(\'|\"){1}\]"
+                        "(\[(?P<component>\d+(,\d+)?)\])?",
+                        text)
+    var_info["entity"] = m_entity["entity"]
+    var_info["entity_id"] = m_entity["entity_id"]
+    var_info["variable"] = m_entity["variable"]
+    if len(groups) == 2:
+        time_text = groups[1].lstrip()
+        m_time = re.match("(?P<time_enum>time|step)"
+                          "\s*=\s*"
+                          "(?P<range>\d+[\S\s]*)",
+                          time_text)
+        var_info["time_enum"] = m_time["time_enum"]
+        bounds = [v.strip() for v in m_time["range"].split("to")]
+        if len(bounds) == 1:
+            var_info["type"] = "instantaneous"
+            var_info["time"] = _to_number(bounds[0])
+        elif len(bounds) == 2:
+            var_info["type"] = "time series"
+            var_info["time"] = (_to_number(bounds[0]), _to_number(bounds[1]))
+    else:
+        var_info["type"] = "time series"
+        var_info["time"] = (-inf, inf)
+    return var_info
 
 
 def scalar_from_xml(element, nominal=None, **kwargs):
@@ -115,24 +156,93 @@ def make_sensitivity_cases(tree, nlevels):
     return cases
 
 
-def single_analysis(pth, dir_out="."):
-    """Prepare FEBio XML for single case analysis."""
+def gen_single_analysis(pth, dir_out="."):
+    """Generate FEBio XML for single case analysis."""
     # Read the relevant analysis parameters and variables
     tree = read_febio_xml(pth)
     e_analysis = tree.find("preprocessor/analysis")
     if "name" in e_analysis.attrib:
-        name = e_analysis.attrib["name"]
+        gen_name = e_analysis.attrib["name"]
     else:
-        name = Path(pth).stem
-    strip_preprocessor_elems(tree)
+        gen_name = Path(pth).stem
+    #
+    # Generate a clean FEBio XML file with plotfile and text data files
+    # for the user's requested variables
+    logfile_selections = {"node": {"vars": set(),
+                                   "ids": set()},
+                          "element": {"vars": set(),
+                                      "ids": set()},
+                          "body": {"vars": set(),
+                                   "ids": set()},
+                          "connector": {"vars": set(),
+                                        "ids": set()}}
+    plotfile_selections = set()
+    for e in tree.findall("preprocessor/analysis/var"):
+        var_info = parse_var_selector(e.text)
+        if e.attrib["source"] == "logfile":
+            logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
+            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity_id"])
+        elif e.attrib["source"] == "plotfile":
+            plotfile_selections.add(var_info["variable"])
+    e_output = tree.find("Output")
+    # Insert logfile-related XML elements into FEBio XML
+    textdata_file_tag = {"node": "node_data",
+                         "element": "element_data",
+                         "body": "rigid_body_data",
+                         "connector": "rigid_connector_data"}
+    # ^ to convert entity names to FEBio XML text data file tag names
+    e_logfile = etree.Element("logfile")
+    for entity_type, selections in logfile_selections.items():
+        if not len(selections["vars"]) > 0:
+            continue
+        e_tdatafile = etree.SubElement(e_logfile, textdata_file_tag[entity_type],
+            file=f"{gen_name}_-_{textdata_file_tag[entity_type]}.txt")
+        e_tdatafile.attrib["data"] = ";".join([v for v in selections["vars"]])
+        e_tdatafile.text = ", ".join(sorted([v for v in selections["ids"]]))
+        # ^ sorting the entity IDs isn't required by FEBio (the text
+        # data file will list entities in whatever order it is given),
+        # but a sorted list is user-friendly.
+    if len(e_logfile.getchildren()) > 0:
+        e_output.append(e_logfile)
+    # Insert plotfile-related XML elements into FEBio XML
+    if len(plotfile_selections) > 0:
+        # Re-use the existing plotfile element if the file name matches
+        e_plotfile = None
+        plotfile_name = f"{gen_name}.xplt"
+        for e in e_output.findall("plotfile"):
+            if "file" not in e.attrib:
+                existing_name = gen_name + ".xplt"
+            else:
+                existing_name = e.attrib["file"]
+            if existing_name == plotfile_name:
+                if e_plotfile is None:
+                    # Re-use the existing output element
+                    e_plotfile = e
+                    e_plotfile.attrib["file"] = plotfile_name
+                    # ^ if output file name is omitted (default), make it concrete
+                else:
+                    # More than one <plotfile> element is pointing at
+                    # the same file
+                    raise ValueError(f"More than one <plotfile> element has `{plotfile_name}` as its output target.  Use a unique file name for each <plotfile> element.")
+        # If no suitable existing plotfile element was found, create a
+        # new one.
+        if e_plotfile is None:
+            e_plotfile = etree.SubElement(e_output, "plotfile",
+                                          file=plotfile_name)
+    for v in plotfile_selections:
+        etree.SubElement(e_plotfile, "var", type=v)
+    #
     # Write the clean FEBio XML file for FEBio to use
-    dir_out = Path(dir_out) / name
+    strip_preprocessor_elems(tree)
+    dir_out = Path(dir_out) / gen_name
     if not dir_out.exists():
         dir_out.mkdir(parents=True)
     if not dir_out.is_dir():
         raise ValueError(f"`{dir_out.resolve()}`, given as `{dir_out}`, is not a directory.")
-    with open(Path(dir_out) / f"{name}.feb", "wb") as f:
+    pth_out = Path(dir_out) / f"{gen_name}.feb"
+    with open(pth_out, "wb") as f:
         write_febio_xml(tree, f)
+    return pth_out
 
 
 def sensitivity_analysis(f, nlevels, dir_out="."):
