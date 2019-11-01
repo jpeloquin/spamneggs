@@ -3,6 +3,10 @@ import os
 from pathlib import Path
 import pandas as pd
 from lxml import etree
+# In-house packages
+from febtools.input import read_febio_xml
+from febtools.output import write_xml as write_febio_xml
+# Same-package modules
 from .variables import *
 
 
@@ -111,7 +115,27 @@ def make_sensitivity_cases(tree, nlevels):
     return cases
 
 
-def sensitivity_analysis(f, nlevels, path_prefix="."):
+def single_analysis(pth, dir_out="."):
+    """Prepare FEBio XML for single case analysis."""
+    # Read the relevant analysis parameters and variables
+    tree = read_febio_xml(pth)
+    e_analysis = tree.find("preprocessor/analysis")
+    if "name" in e_analysis.attrib:
+        name = e_analysis.attrib["name"]
+    else:
+        name = Path(pth).stem
+    strip_preprocessor_elems(tree)
+    # Write the clean FEBio XML file for FEBio to use
+    dir_out = Path(dir_out) / name
+    if not dir_out.exists():
+        dir_out.mkdir(parents=True)
+    if not dir_out.is_dir():
+        raise ValueError(f"`{dir_out.resolve()}`, given as `{dir_out}`, is not a directory.")
+    with open(Path(dir_out) / f"{name}.feb", "wb") as f:
+        write_febio_xml(tree, f)
+
+
+def sensitivity_analysis(f, nlevels, dir_out="."):
     """Return table of cases for sensitivity analysis."""
     parser = etree.XMLParser(remove_blank_text=True)
     tree = etree.parse(f, parser)
@@ -121,9 +145,9 @@ def sensitivity_analysis(f, nlevels, path_prefix="."):
     write_cases(cases, analysis_name, path_prefix=path_prefix)
 
 
-def write_cases(cases, analysis_name, path_prefix="."):
+def write_cases(cases, analysis_name, dir_out="."):
     """Write tabulated analysis cases to a directory."""
-    dir_out = Path(path_prefix) / Path(analysis_name)
+    dir_out = Path(dir_out) / Path(analysis_name)
     dir_out.mkdir(exist_ok=True)
     analysis_name = dir_out.name
     # Write each file
