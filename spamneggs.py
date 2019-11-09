@@ -1,3 +1,4 @@
+import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
@@ -59,3 +60,17 @@ def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
         ax.legend()
         fig.tight_layout()
         fig.savefig(os.path.join(dir_out, f"sensitivity_local_ind_curve_-_{name}.svg"))
+
+
+class NDArrayJSONEncoder(json.JSONEncoder):
+
+    def default(self, o):
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        else:
+            return super().default(o)
+
+
+def write_record_to_json(record, f):
+    json.dump(record, f, indent=2, ensure_ascii=False,
+              cls=NDArrayJSONEncoder)

@@ -336,10 +336,18 @@ def tabulate_single_analysis(parent_file, case_file):
                 value = tab[var_info["variable"]].loc[step]
                 record["instantaneous variables"][e.attrib["name"]] = {"value": value}
             elif var_info["type"] == "time series":
-                raise NotImplementedError
+                record["time series variables"][e.attrib["name"]] =\
+                    {"times": tab["Time"].values,
+                     "steps": tab.index.values,
+                     "values": tab[var_info["variable"]].values}
     # Assemble the time series table
-    timeseries = pd.DataFrame()
-    return record, timeseries
+    tab_timeseries = {}
+    for var, d in record["time series variables"].items():
+        tab_timeseries["Time"] = d["times"]
+        tab_timeseries["Step"] = d["steps"]
+        tab_timeseries[var] = d["values"]
+    tab_timeseries = pd.DataFrame(tab_timeseries)
+    return record, tab_timeseries
 
 
 def sensitivity_analysis(f, nlevels, dir_out="."):
