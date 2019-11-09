@@ -2,14 +2,24 @@ from itertools import product
 from math import inf
 import os
 from pathlib import Path
-import pandas as pd
 import re
+from warnings import warn
+# Third-party packages
+import pandas as pd
 from lxml import etree
 # In-house packages
-from febtools.input import read_febio_xml
+from febtools.input import read_febio_xml, textdata_table
+from febtools.xplt import XpltData
 from febtools.output import write_xml as write_febio_xml
 # Same-package modules
 from .variables import *
+
+
+# To convert entity names to FEBio XML text data file tag names:
+TAG_FOR_ENTITY_TYPE = {"node": "node_data",
+                       "element": "element_data",
+                       "body": "rigid_body_data",
+                       "connector": "rigid_connector_data"}
 
 
 def _to_number(s):
@@ -45,7 +55,7 @@ def parse_var_selector(text):
                         "(\[(?P<component>\d+(,\d+)?)\])?",
                         text)
     var_info["entity"] = m_entity["entity"]
-    var_info["entity_id"] = m_entity["entity_id"]
+    var_info["entity_id"] = int(m_entity["entity_id"])
     var_info["variable"] = m_entity["variable"]
     if len(groups) == 2:
         time_text = groups[1].lstrip()
@@ -156,15 +166,20 @@ def make_sensitivity_cases(tree, nlevels):
     return cases
 
 
+def get_analysis_name(tree):
+    e_analysis = tree.find("preprocessor/analysis")
+    if "name" in e_analysis.attrib:
+        name = e_analysis.attrib["name"]
+    else:
+        name = Path(pth).stem
+    return name
+
+
 def gen_single_analysis(pth, dir_out="."):
     """Generate FEBio XML for single case analysis."""
     # Read the relevant analysis parameters and variables
     tree = read_febio_xml(pth)
-    e_analysis = tree.find("preprocessor/analysis")
-    if "name" in e_analysis.attrib:
-        gen_name = e_analysis.attrib["name"]
-    else:
-        gen_name = Path(pth).stem
+    gen_name = get_analysis_name(tree)
     #
     # Generate a clean FEBio XML file with plotfile and text data files
     # for the user's requested variables
@@ -186,19 +201,14 @@ def gen_single_analysis(pth, dir_out="."):
             plotfile_selections.add(var_info["variable"])
     e_output = tree.find("Output")
     # Insert logfile-related XML elements into FEBio XML
-    textdata_file_tag = {"node": "node_data",
-                         "element": "element_data",
-                         "body": "rigid_body_data",
-                         "connector": "rigid_connector_data"}
-    # ^ to convert entity names to FEBio XML text data file tag names
     e_logfile = etree.Element("logfile")
     for entity_type, selections in logfile_selections.items():
         if not len(selections["vars"]) > 0:
             continue
-        e_tdatafile = etree.SubElement(e_logfile, textdata_file_tag[entity_type],
-            file=f"{gen_name}_-_{textdata_file_tag[entity_type]}.txt")
+        e_tdatafile = etree.SubElement(e_logfile, TAG_FOR_ENTITY_TYPE[entity_type],
+            file=f"{gen_name}_-_{TAG_FOR_ENTITY_TYPE[entity_type]}.txt")
         e_tdatafile.attrib["data"] = ";".join([v for v in selections["vars"]])
-        e_tdatafile.text = ", ".join(sorted([v for v in selections["ids"]]))
+        e_tdatafile.text = ", ".join(sorted([str(v) for v in selections["ids"]]))
         # ^ sorting the entity IDs isn't required by FEBio (the text
         # data file will list entities in whatever order it is given),
         # but a sorted list is user-friendly.
@@ -243,6 +253,93 @@ def gen_single_analysis(pth, dir_out="."):
     with open(pth_out, "wb") as f:
         write_febio_xml(tree, f)
     return pth_out
+
+
+def tabulate_single_analysis(parent_file, case_file):
+    """Tabulate variables for single case analysis."""
+    parent_file = Path(parent_file)
+    case_file = Path(case_file)
+    parent_tree = read_febio_xml(str(parent_file))
+    case_tree = read_febio_xml(str(case_file))
+    analysis_name = get_analysis_name(parent_tree)
+    # Read the plotfile
+    pth_xplt = case_file.with_suffix(".xplt")
+    with open(pth_xplt, "rb") as f:
+        xplt_data = XpltData(f.read())
+    # Read the text data files
+    text_data = {}
+    for entity_type in ("node", "element", "body", "connector"):
+        tagname = TAG_FOR_ENTITY_TYPE[entity_type]
+        fname = f"{case_file.stem}_-_{tagname}.txt"
+        e_textdata = case_tree.find(f"Output/logfile/{tagname}[@file='{fname}']")
+        if e_textdata is not None:
+            text_data[entity_type] = textdata_table(case_file.parent / fname)
+        else:
+            text_data[entity_type] = None
+    # Extract values for each variable based on its <var> element
+    record = {"instantaneous variables": {},
+              "time series variables": {}}
+    for e in parent_tree.findall("preprocessor/analysis/var"):
+        var_info = parse_var_selector(e.text)
+        if e.attrib["source"] == "plotfile":
+            warn("Skipping plotfile var; plotfiles not supported yet in analysis elements.")
+            continue
+        elif e.attrib["source"] == "logfile":
+            cardinality = "scalar"  # All logfile values are scalar
+            # Apply entity type selector
+            tab = text_data[var_info["entity"]]
+            # Apply entity ID selector
+            tab = tab[tab["Item"] == var_info["entity_id"]]
+            # Apply time selector
+            tab = tab.set_index("Step")
+            if var_info["type"] == "instantaneous":
+                if var_info["time_enum"] == "time":
+                    # Find step closest to specified time.
+                    step = (tab["Time"] - var_info["time"]).abs().idxmin()
+                    # Raise a warning if the specified value is not
+                    # close to a step.  In the future we may support
+                    # interpolation or other fixes.
+                    t_error = tab["Time"].loc[step] - var_info["time"]
+                    if t_error == 0:
+                        t_relerror = 0
+                    elif step == 1 and t_error < 0:
+                        # The selection specifies a time point before
+                        # the first time step
+                        t_relerror = t_error / tab["Time"].loc[step]
+                    elif step == tab.index[-1] and t_error >= 0:
+                        # The selection specifies a time point after the
+                        # last time step.  It might only be a little
+                        # after, within acceptable tolerance when
+                        # working with floating point values, so we do
+                        # not raise an error until further checks.
+                        t_relerror = t_error / (tab["Time"].loc[step] -
+                                                tab["Time"].loc[step-1])
+                    else:
+                        t_relerror = t_error / abs(tab["Time"].loc[step] -
+                            tab["Time"].loc[step + int(np.sign(t_error))])
+                    # TODO: Make warning thresholds configurable
+                    if abs(t_error) > 0 and t_relerror > 0.01:
+                        msg = f"A value for {var_info['variable']} was requested for t = {var_info['time']}, but the closest converged time step is t = {tab.loc[step]['Time']} (absolute error = {t_error}, relative error = {100 * t_error / t_interval}%)."
+                        warn(msg)
+                elif var_info["time_enum"] == "step":
+                    step = var_info["time"]
+                    # & should already be int from parse_var_selector
+                    if step == 0:
+                        raise ValueError("Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0.")
+                    if step not in tab.index:
+                        raise ValueError(f"A value for {var_info['variable']} was requested for step = {step}, but this step is not present in the FEBio text data output.")
+                else:
+                    msg = "Time selectors of type {var_info['time_enum']} "\
+                        "are not supported.  Use 'step' or 'time'."
+                    raise ValueError(msg)
+                # Apply variable name selector
+                value = tab[var_info["variable"]].loc[step]
+                record["instantaneous variables"][e.attrib["name"]] = {"value": value}
+            elif var_info["type"] == "time series":
+                raise NotImplementedError
+    # Assemble the time series table
+    timeseries = pd.DataFrame()
+    return record, timeseries
 
 
 def sensitivity_analysis(f, nlevels, dir_out="."):
