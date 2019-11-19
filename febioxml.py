@@ -11,6 +11,7 @@ from lxml import etree
 from febtools.input import read_febio_xml, textdata_table
 from febtools.xplt import XpltData
 from febtools.output import write_xml as write_febio_xml
+from febtools.util import find_closest_timestep
 # Same-package modules
 from .variables import *
 
@@ -38,27 +39,72 @@ def _maybe_to_number(s):
         return s
 
 
+def _parse_selector_part(text):
+    """Parse selector component like name[i] or "nm1 nm2"[i]"""
+    text = text.strip()
+    if text.endswith("]"):
+        i = text.rfind("[")
+        id_text = text[i+1:-1].strip()
+        if id_text.startswith("("):
+            # ID part is a canonical tuple
+            ids = tuple([tuple(int(a) for a in b.strip().lstrip("(").split(","))
+                         for b in id_text.split(")")[:-1]])
+        else:
+            # ID part is an integer ID or a sequence of integer IDs
+            ids = tuple(int(a) for a in id_text.split(","))
+        text = text[:i]
+    else:
+        ids = tuple()
+    name = text.strip("'").strip('"')
+    return name, ids
+
+
 def parse_var_selector(text):
     """Parse the parts of a variable selector for plotfiles and logfiles."""
-    var_info = {"entity": None,  # element, node, connector, or body
-                "entity_id": None,  # integer
+    var_info = {"entity": None,  # element, face, node, connector, or body
+                "entity ID": None,  # integer or tuple of integers
                 "variable": "",
+                "component": tuple(),
+                "region": None,
+                "parent": None,
                 "type": "",  # instantaneous or time series
                 "time_enum": None,  # time, step, or (if all time
                                     # points) None
                 "time": None}
     groups = text.strip().split("@")
-    entity_text = groups[0].rstrip()
-    m_entity = re.match("(?P<entity>element|node|connector|body)"
-                        "\[(?P<entity_id>\d+)\]"
-                        "\[(\'|\"){1}(?P<variable>[^\'\"]+)(\'|\"){1}\]"
-                        "(\[(?P<component>\d+(,\d+)?)\])?",
-                        text)
-    var_info["entity"] = m_entity["entity"]
-    var_info["entity_id"] = int(m_entity["entity_id"])
-    var_info["variable"] = m_entity["variable"]
+    parts = groups[0].strip().split(".")
+    # Variable selector
+    var_name, var_components = _parse_selector_part(parts.pop(-1))
+    var_info["variable"] = var_name
+    var_info["component"] = tuple(a - 1 for a in var_components)
+    # Entity selector
+    entity_type, entity_id = _parse_selector_part(parts.pop(0))
+    var_info["entity"] = entity_type
+    if entity_type in ("domain", "surface"):
+        # Plotfile regions have 1-indexed IDs because they don't really
+        # exist outside the plotfile, so febtools doesn't give them
+        # proper IDs
+        var_info["entity ID"] = entity_id[0]
+    else:
+        # Nodes, canonical face tuples, and elements have 0-indexed IDs
+        # as far as febtools and spamneggs are concerned
+        if hasattr(entity_id[0], "__iter__"):
+            var_inf["entity ID"] = tuple(a - 1 for a in entity_id[0])
+        else:
+            var_info["entity ID"] = entity_id[0] - 1
+    # Region selector (optional)
+    if parts:
+        region_type, region_id = _parse_selector_part(parts.pop(-1))
+        var_info["region"] = {"type": region_type,
+                              "ID": region_id[0]}
+    # Parent selector (optional)
+    if parts:
+        parent_type, parent_id = _parse_selector_part(parts.pop(0))
+        var_info["parent"] = {"type": parent_type,
+                              "ID": parent_id[0]}
+    # Time selector
     if len(groups) == 2:
-        time_text = groups[1].lstrip()
+        time_text = groups[1].strip()
         m_time = re.match("(?P<time_enum>time|step)"
                           "\s*=\s*"
                           "(?P<range>\d+[\S\s]*)",
@@ -196,10 +242,12 @@ def gen_single_analysis(pth, dir_out="."):
         var_info = parse_var_selector(e.text)
         if e.attrib["source"] == "logfile":
             logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
-            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity_id"])
+            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity ID"])
         elif e.attrib["source"] == "plotfile":
             plotfile_selections.add(var_info["variable"])
     e_output = tree.find("Output")
+    if e_output is None:
+        e_output = etree.SubElement(tree.getroot(), "Output")
     # Insert logfile-related XML elements into FEBio XML
     e_logfile = etree.Element("logfile")
     for entity_type, selections in logfile_selections.items():
@@ -282,54 +330,58 @@ def tabulate_single_analysis(parent_file, case_file):
     for e in parent_tree.findall("preprocessor/analysis/var"):
         var_info = parse_var_selector(e.text)
         if e.attrib["source"] == "plotfile":
-            warn("Skipping plotfile var; plotfiles not supported yet in analysis elements.")
-            continue
+            # Get ID for region selector
+            if var_info["region"] is None:
+                region_id = None
+            else:
+                region_id = var_info["region"]["ID"]
+            # Get ID for parent selector
+            if var_info["parent"] is None:
+                parent_id = None
+            else:
+                parent_id = var_info["parent"]["ID"]
+            if var_info["type"] == "instantaneous":
+                # Convert time selector to step selector
+                if var_info["time_enum"] == "time":
+                    step = find_closest_timestep(var_info["time"],
+                                                 xplt_data.step_times,
+                                                 np.array(range(len(xplt_data.step_times))))
+                value = xplt_data.value(var_info["variable"], step,
+                                        var_info["entity ID"],
+                                        region_id, parent_id)
+            elif var_info["type"] == "time series":
+                data = xplt_data.values(var_info["variable"],
+                                        entity_id=var_info["entity ID"],
+                                        region_id=region_id,
+                                        parent_id=parent_id)
+                values = np.moveaxis(np.array(data[var_info["variable"]]), 0, -1)
+                for c in var_info["component"]:
+                    values = values[c]
+                record["time series variables"][e.attrib["name"]] =\
+                    {"times": xplt_data.step_times,
+                     "steps": np.array(range(len(xplt_data.step_times))),
+                     "values": values}
         elif e.attrib["source"] == "logfile":
             cardinality = "scalar"  # All logfile values are scalar
             # Apply entity type selector
             tab = text_data[var_info["entity"]]
             # Apply entity ID selector
-            tab = tab[tab["Item"] == var_info["entity_id"]]
+            tab = tab[tab["Item"] == var_info["entity ID"]]
             # Apply time selector
             tab = tab.set_index("Step")
             if var_info["type"] == "instantaneous":
+                # Convert time selector to step selector
                 if var_info["time_enum"] == "time":
-                    # Find step closest to specified time.
-                    step = (tab["Time"] - var_info["time"]).abs().idxmin()
-                    # Raise a warning if the specified value is not
-                    # close to a step.  In the future we may support
-                    # interpolation or other fixes.
-                    t_error = tab["Time"].loc[step] - var_info["time"]
-                    if t_error == 0:
-                        t_relerror = 0
-                    elif step == 1 and t_error < 0:
-                        # The selection specifies a time point before
-                        # the first time step
-                        t_relerror = t_error / tab["Time"].loc[step]
-                    elif step == tab.index[-1] and t_error >= 0:
-                        # The selection specifies a time point after the
-                        # last time step.  It might only be a little
-                        # after, within acceptable tolerance when
-                        # working with floating point values, so we do
-                        # not raise an error until further checks.
-                        t_relerror = t_error / (tab["Time"].loc[step] -
-                                                tab["Time"].loc[step-1])
-                    else:
-                        t_relerror = t_error / abs(tab["Time"].loc[step] -
-                            tab["Time"].loc[step + int(np.sign(t_error))])
-                    # TODO: Make warning thresholds configurable
-                    if abs(t_error) > 0 and t_relerror > 0.01:
-                        msg = f"A value for {var_info['variable']} was requested for t = {var_info['time']}, but the closest converged time step is t = {tab.loc[step]['Time']} (absolute error = {t_error}, relative error = {100 * t_error / t_interval}%)."
-                        warn(msg)
-                elif var_info["time_enum"] == "step":
-                    step = var_info["time"]
-                    # & should already be int from parse_var_selector
+                    step = find_closest_timestep(var_info["time"],
+                                                 tab["Time"], tab.index)
                     if step == 0:
                         raise ValueError("Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0.")
                     if step not in tab.index:
                         raise ValueError(f"A value for {var_info['variable']} was requested for step = {step}, but this step is not present in the FEBio text data output.")
+                elif var_info["time_enum"] == "step":
+                    step = var_info["time"]
                 else:
-                    msg = "Time selectors of type {var_info['time_enum']} "\
+                    msg = f"Time selectors of type {var_info['time_enum']} "\
                         "are not supported.  Use 'step' or 'time'."
                     raise ValueError(msg)
                 # Apply variable name selector
@@ -341,7 +393,8 @@ def tabulate_single_analysis(parent_file, case_file):
                      "steps": tab.index.values,
                      "values": tab[var_info["variable"]].values}
     # Assemble the time series table
-    tab_timeseries = {}
+    tab_timeseries = {"Time": [],
+                      "Step": []}
     for var, d in record["time series variables"].items():
         tab_timeseries["Time"] = d["times"]
         tab_timeseries["Step"] = d["steps"]

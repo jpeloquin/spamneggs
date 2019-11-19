@@ -127,6 +127,10 @@ def plot_timeseries_vars(timeseries, dir_out):
     handle, allowing customization.
 
     """
+    if not isinstance(timeseries, pd.DataFrame):
+        timeseries = pd.DataFrame(timeseries)
+    if len(timeseries) == 0:
+        raise ValueError("No values in time series data.")
     timeseries = timeseries.set_index("Step")
     nm_xaxis = "Time"
     nms_yaxis = [nm for nm in timeseries.columns if nm != nm_xaxis]
