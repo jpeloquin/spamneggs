@@ -362,12 +362,10 @@ def tabulate_single_analysis(parent_file, case_file):
                      "steps": np.array(range(len(xplt_data.step_times))),
                      "values": values}
         elif e.attrib["source"] == "logfile":
-            cardinality = "scalar"  # All logfile values are scalar
             # Apply entity type selector
             tab = text_data[var_info["entity"]]
             # Apply entity ID selector
             tab = tab[tab["Item"] == var_info["entity ID"]]
-            # Apply time selector
             tab = tab.set_index("Step")
             if var_info["type"] == "instantaneous":
                 # Convert time selector to step selector
@@ -384,7 +382,7 @@ def tabulate_single_analysis(parent_file, case_file):
                     msg = f"Time selectors of type {var_info['time_enum']} "\
                         "are not supported.  Use 'step' or 'time'."
                     raise ValueError(msg)
-                # Apply variable name selector
+                # Apply variable name and time selector
                 value = tab[var_info["variable"]].loc[step]
                 record["instantaneous variables"][e.attrib["name"]] = {"value": value}
             elif var_info["type"] == "time series":
