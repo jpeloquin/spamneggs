@@ -26,7 +26,7 @@ def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
     about which the local sensitivity analysis is done.
 
     incr := N-tuple of numbers.  Increments specifying how much to change each
-    model parameter in the sentivity analysis.
+    model parameter in the sensitivity analysis.
 
     dir_out := path to directory into which to write the sensitivity
     analysis plots.

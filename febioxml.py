@@ -139,6 +139,91 @@ def scalar_from_xml(element, nominal=None, **kwargs):
         raise ValueError(f"Distribution type '{dist.attrib['type']}' not yet supported.")
 
 
+def get_output_reqs(tree):
+    """Return the FEBio XML output vars required for <analysis>
+
+    `get_output_reqs` is separate from `insert_output_elem`, which
+    actually inserts <Output> child elements, because the XML template
+    in which the <Output> child elements are to be inserted usually has
+    only FEBio-compatible elements and hence no list of analysis
+    variables.
+
+    """
+    # user's variables
+    logfile_selections = {"node": {"vars": set(),
+                                   "ids": set()},
+                          "element": {"vars": set(),
+                                      "ids": set()},
+                          "body": {"vars": set(),
+                                   "ids": set()},
+                          "connector": {"vars": set(),
+                                        "ids": set()}}
+    plotfile_selections = set()
+    for e in tree.findall("preprocessor/analysis/var"):
+        var_info = parse_var_selector(e.text)
+        if e.attrib["source"] == "logfile":
+            logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
+            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity ID"])
+        elif e.attrib["source"] == "plotfile":
+            plotfile_selections.add(var_info["variable"])
+    return logfile_selections, plotfile_selections
+
+
+def insert_output_elem(tree, logfile_selections, plotfile_selections,
+                       file_stem=None):
+    """Create <Output> element in tree for variables in <analysis>.
+
+    """
+    if file_stem is None:
+        file_stem = get_analysis_name(tree)
+
+    # Find or create the <Output> element
+    e_output = tree.find("Output")
+    if e_output is None:
+        e_output = etree.SubElement(tree.getroot(), "Output")
+    # Insert logfile-related XML elements into FEBio XML
+    e_logfile = etree.Element("logfile")
+    for entity_type, selections in logfile_selections.items():
+        if not len(selections["vars"]) > 0:
+            continue
+        e_tdatafile = etree.SubElement(e_logfile, TAG_FOR_ENTITY_TYPE[entity_type],
+            file=f"{file_stem}_-_{TAG_FOR_ENTITY_TYPE[entity_type]}.txt")
+        e_tdatafile.attrib["data"] = ";".join([v for v in selections["vars"]])
+        e_tdatafile.text = ", ".join(sorted([str(v) for v in selections["ids"]]))
+        # ^ sorting the entity IDs isn't required by FEBio (the text
+        # data file will list entities in whatever order it is given),
+        # but a sorted list is user-friendly.
+    if len(e_logfile.getchildren()) > 0:
+        e_output.append(e_logfile)
+    # Insert plotfile-related XML elements into FEBio XML
+    if len(plotfile_selections) > 0:
+        # Re-use the existing plotfile element if the file name matches
+        e_plotfile = None
+        plotfile_name = f"{file_stem}.xplt"
+        for e in e_output.findall("plotfile"):
+            if "file" not in e.attrib:
+                existing_name = file_stem + ".xplt"
+            else:
+                existing_name = e.attrib["file"]
+            if existing_name == plotfile_name:
+                if e_plotfile is None:
+                    # Re-use the existing output element
+                    e_plotfile = e
+                    e_plotfile.attrib["file"] = plotfile_name
+                    # ^ if output file name is omitted (default), make it concrete
+                else:
+                    # More than one <plotfile> element is pointing at
+                    # the same file
+                    raise ValueError(f"More than one <plotfile> element has `{plotfile_name}` as its output target.  Use a unique file name for each <plotfile> element.")
+        # If no suitable existing plotfile element was found, create a
+        # new one.
+        if e_plotfile is None:
+            e_plotfile = etree.SubElement(e_output, "plotfile",
+                                          file=plotfile_name)
+    for v in plotfile_selections:
+        etree.SubElement(e_plotfile, "var", type=v)
+
+
 def strip_preprocessor_elems(tree):
     """Remove preprocessor elements from extended FEBio XML.
 
@@ -159,59 +244,6 @@ def strip_preprocessor_elems(tree):
         parent.text = nominal
 
 
-def make_sensitivity_cases(tree, nlevels):
-    """Return table of cases for sensitivity analysis."""
-    cases = []
-    # Find all the variable parameters (at the moment, just <scalar>
-    # elements) in the tree, and remember their positions in the tree by
-    # storing the parent element of each.
-    e_scalars = tree.findall(".//scalar")
-    e_parents = {}
-    for e_scalar in e_scalars:
-        e_parents[e_scalar] = e_scalar.getparent()
-    # Remove all the preprocessor elements; FEBio can't handle them
-    strip_preprocessor_elems(tree)
-    # Generate levels for each variable parameter
-    colnames = []
-    levels = {}
-    for e_scalar in e_scalars:
-        # Get / make up name for variable
-        try:
-            varname = e_scalar.attrib["name"]
-        except KeyError:
-            varname = tree.getelementpath(e_parents[e_scalar])
-        colnames.append(varname)
-        # Get nominal value
-        e_nominal = e_scalar.find("nominal")
-        if e_nominal is None:
-            nominal = None
-        else:
-            nominal = e_nominal.text.strip()
-        scalar = scalar_from_xml(e_scalar, nominal=nominal, name=varname)
-        # Calculate variable's levels
-        if isinstance(scalar, ContinuousScalar):
-            levels[varname] = scalar.sensitivity_levels(nlevels)
-        elif isinstance(scalar, CategoricalScalar):
-            levels[varname] = scalar.sensitivity_levels()
-        else:
-            raise ValueError(f"Generating levels from a variable of type `{type(scalar)}` is not yet supported.")
-    cases = pd.DataFrame({k: v for k, v in zip(colnames,
-                                               zip(*product(*(levels[k]
-                                                              for k in colnames))))})
-    # Process variables
-    xml_data = []
-    for i, case in cases.iterrows():
-        for e_scalar, colname in zip(e_scalars, colnames):
-            e_parents[e_scalar].text = str(case[colname])
-        xml_data.append(etree.tostring(tree,
-                                       pretty_print=True,
-                                       xml_declaration=True,
-                                       encoding="utf-8"))
-    cases["xml"] = xml_data
-    cases = pd.DataFrame(cases)
-    return cases
-
-
 def get_analysis_name(tree):
     e_analysis = tree.find("preprocessor/analysis")
     if "name" in e_analysis.attrib:
@@ -225,79 +257,20 @@ def gen_single_analysis(pth, dir_out="."):
     """Generate FEBio XML for single case analysis."""
     # Read the relevant analysis parameters and variables
     tree = read_febio_xml(pth)
-    gen_name = get_analysis_name(tree)
-    #
-    # Generate a clean FEBio XML file with plotfile and text data files
-    # for the user's requested variables
-    logfile_selections = {"node": {"vars": set(),
-                                   "ids": set()},
-                          "element": {"vars": set(),
-                                      "ids": set()},
-                          "body": {"vars": set(),
-                                   "ids": set()},
-                          "connector": {"vars": set(),
-                                        "ids": set()}}
-    plotfile_selections = set()
-    for e in tree.findall("preprocessor/analysis/var"):
-        var_info = parse_var_selector(e.text)
-        if e.attrib["source"] == "logfile":
-            logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
-            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity ID"])
-        elif e.attrib["source"] == "plotfile":
-            plotfile_selections.add(var_info["variable"])
-    e_output = tree.find("Output")
-    if e_output is None:
-        e_output = etree.SubElement(tree.getroot(), "Output")
-    # Insert logfile-related XML elements into FEBio XML
-    e_logfile = etree.Element("logfile")
-    for entity_type, selections in logfile_selections.items():
-        if not len(selections["vars"]) > 0:
-            continue
-        e_tdatafile = etree.SubElement(e_logfile, TAG_FOR_ENTITY_TYPE[entity_type],
-            file=f"{gen_name}_-_{TAG_FOR_ENTITY_TYPE[entity_type]}.txt")
-        e_tdatafile.attrib["data"] = ";".join([v for v in selections["vars"]])
-        e_tdatafile.text = ", ".join(sorted([str(v) for v in selections["ids"]]))
-        # ^ sorting the entity IDs isn't required by FEBio (the text
-        # data file will list entities in whatever order it is given),
-        # but a sorted list is user-friendly.
-    if len(e_logfile.getchildren()) > 0:
-        e_output.append(e_logfile)
-    # Insert plotfile-related XML elements into FEBio XML
-    if len(plotfile_selections) > 0:
-        # Re-use the existing plotfile element if the file name matches
-        e_plotfile = None
-        plotfile_name = f"{gen_name}.xplt"
-        for e in e_output.findall("plotfile"):
-            if "file" not in e.attrib:
-                existing_name = gen_name + ".xplt"
-            else:
-                existing_name = e.attrib["file"]
-            if existing_name == plotfile_name:
-                if e_plotfile is None:
-                    # Re-use the existing output element
-                    e_plotfile = e
-                    e_plotfile.attrib["file"] = plotfile_name
-                    # ^ if output file name is omitted (default), make it concrete
-                else:
-                    # More than one <plotfile> element is pointing at
-                    # the same file
-                    raise ValueError(f"More than one <plotfile> element has `{plotfile_name}` as its output target.  Use a unique file name for each <plotfile> element.")
-        # If no suitable existing plotfile element was found, create a
-        # new one.
-        if e_plotfile is None:
-            e_plotfile = etree.SubElement(e_output, "plotfile",
-                                          file=plotfile_name)
-    for v in plotfile_selections:
-        etree.SubElement(e_plotfile, "var", type=v)
-    #
-    # Write the clean FEBio XML file for FEBio to use
+    analysis_name = get_analysis_name(tree)
+    # Generate a clean FEBio XML file that FEBio can run.  Insert
+    # appropritae plotfile and text data files for the user's requested
+    # variables, and strip all preprocessor-related tags.
+    insert_output_elem(tree, *get_output_reqs(tree),
+                       file_stem=analysis_name)
     strip_preprocessor_elems(tree)
-    dir_out = Path(dir_out) / gen_name
+    # Write the clean FEBio XML file for FEBio to use
+    dir_out = Path(dir_out) / analysis_name
     if not dir_out.exists():
         dir_out.mkdir(parents=True)
     if not dir_out.is_dir():
         raise ValueError(f"`{dir_out.resolve()}`, given as `{dir_out}`, is not a directory.")
-    pth_out = Path(dir_out) / f"{gen_name}.feb"
+    pth_out = Path(dir_out) / f"{analysis_name}.feb"
     with open(pth_out, "wb") as f:
         write_febio_xml(tree, f)
     return pth_out
@@ -401,30 +374,78 @@ def tabulate_single_analysis(parent_file, case_file):
     return record, tab_timeseries
 
 
-def sensitivity_analysis(f, nlevels, dir_out="."):
+def gen_sensitivity_cases(tree, nlevels, dir_out="."):
     """Return table of cases for sensitivity analysis."""
-    parser = etree.XMLParser(remove_blank_text=True)
-    tree = etree.parse(f, parser)
-    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
-                              "analysis[@type='sensitivity']").attrib["name"]
-    cases = make_sensitivity_cases(tree, nlevels)
-    write_cases(cases, analysis_name, path_prefix=path_prefix)
-
-
-def write_cases(cases, analysis_name, dir_out="."):
-    """Write tabulated analysis cases to a directory."""
-    dir_out = Path(dir_out) / Path(analysis_name)
-    dir_out.mkdir(exist_ok=True)
-    analysis_name = dir_out.name
-    # Write each file
-    case_files = []
-    for i, row in cases.iterrows():
-        fname = f"{analysis_name}_case={i}.feb"
-        with open(dir_out / fname, "wb") as f:
-            f.write(row["xml"])
-        case_files.append(fname)
-    # Replace XML bytes with file paths
-    manifest = cases[[c for c in cases.columns if c != "xml"]]
-    manifest['path'] = case_files
-    manifest.to_csv(dir_out / f"{analysis_name}_manifest.csv",
-                    index_label="case")
+    dir_out = Path(dir_out)
+    if not dir_out.exists():
+        dir_out.mkdir()
+    analysis = {"name": get_analysis_name(tree),
+                "directory": dir_out,
+                "FEBio output": get_output_reqs(tree)}
+    cases = []
+    # Find all the variable parameters (at the moment, just <scalar>
+    # elements) in the tree, and remember position of each in the tree by
+    # storing the path to its parent element.
+    e_scalars = tree.findall(".//scalar")
+    variables = {}
+    for e_scalar in e_scalars:
+        # Get path of parent element
+        parent_path = tree.getelementpath(e_scalar.getparent())
+        # Get / make up name for variable
+        try:
+            varname = e_scalar.attrib["name"]
+        except KeyError:
+            varname = parent_path
+        # Get variable's nominal value
+        e_nominal = e_scalar.find("nominal")
+        if e_nominal is None:
+            nominal = None
+        else:
+            nominal = e_nominal.text.strip()
+        # Store metadata about the variable
+        variables[varname] = {"parent": parent_path,
+                              "nominal": nominal,
+                              "var": scalar_from_xml(e_scalar)}
+    # Remove all the preprocessor elements; FEBio can't handle them.
+    # This also replaces each variable with its nominal value, but they
+    # will be changed later.
+    strip_preprocessor_elems(tree)
+    # Generate list of cases based on combinations of levels for each
+    # variable parameter
+    colnames = []
+    levels = {}
+    for varname, mdata in variables.items():
+        colnames.append(varname)
+        var = mdata["var"]
+        # Calculate variable's levels
+        if isinstance(var, ContinuousScalar):
+            levels[varname] = var.sensitivity_levels(nlevels)
+        elif isinstance(var, CategoricalScalar):
+            levels[varname] = var.sensitivity_levels()
+        else:
+            raise ValueError(f"Generating levels from a variable of type `{type(var)}` is not yet supported.")
+    cases = pd.DataFrame({k: v for k, v in zip(colnames,
+                                               zip(*product(*(levels[k]
+                                                              for k in colnames))))})
+    # Modify the parameters in the XML and write the modified XML to disk
+    feb_paths = []
+    for i, case in cases.iterrows():
+        for varname in colnames:
+            # Alter the model parameters to match the current case
+            e_parameter = tree.find(variables[varname]["parent"])
+            assert(e_parameter is not None)
+            e_parameter.text = str(case[varname])
+        # Add the needed elements in <Output> to support the requested
+        # variables.  We have to do this for each case because the
+        # output file names are case-dependent.
+        file_stem = f"{analysis['name']}_-_case={i}"
+        insert_output_elem(tree, *analysis["FEBio output"],
+                           file_stem=file_stem)
+        # Write the modified XML to disk
+        pth = analysis["directory"] / f"{file_stem}.feb"
+        with open(pth, "wb") as f:
+            write_febio_xml(tree, f)
+        feb_paths.append(pth)
+    cases["path"] = feb_paths
+    cases = pd.DataFrame(cases)
+    return cases
