@@ -98,6 +98,8 @@ class NDArrayJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, np.ndarray):
             return o.tolist()
+        elif isinstance(o, np.floating):
+            return float(o)
         else:
             return super().default(o)
 

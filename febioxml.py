@@ -322,6 +322,10 @@ def tabulate_single_analysis(parent_file, case_file):
                 value = xplt_data.value(var_info["variable"], step,
                                         var_info["entity ID"],
                                         region_id, parent_id)
+                # Apply component selector
+                for c in var_info["component"]:
+                    value = value[c]
+                # Save selected value
                 record["instantaneous variables"][e.attrib["name"]] =\
                     {"value": value}
             elif var_info["type"] == "time series":
