@@ -322,6 +322,8 @@ def tabulate_single_analysis(parent_file, case_file):
                 value = xplt_data.value(var_info["variable"], step,
                                         var_info["entity ID"],
                                         region_id, parent_id)
+                record["instantaneous variables"][e.attrib["name"]] =\
+                    {"value": value}
             elif var_info["type"] == "time series":
                 data = xplt_data.values(var_info["variable"],
                                         entity_id=var_info["entity ID"],
