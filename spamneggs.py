@@ -1,5 +1,7 @@
 import json
 import os
+from pathlib import Path
+import subprocess
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 from mpl_toolkits.axes_grid1 import host_subplot
@@ -10,6 +12,29 @@ from warnings import warn
 import pandas as pd
 # Same-package modules
 from .variables import *
+
+
+class FEBioError(Exception):
+    """Raised when an FEBio simulation terminates in an error."""
+    pass
+
+
+def run_case(pth_feb):
+    proc = subprocess.run(['febio', '-i', pth_feb.name],
+                      cwd=Path(pth_feb).parent,  # FEBio always writes xplt to current dir
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        # FEBio truly does return an error code on "Error Termination";
+        # I checked.
+        pth_log = Path(pth_feb).with_suffix(".log")
+        with open(pth_log, "wb") as f:
+            f.write(proc.stdout)  # FEBio doesn't always write a log if it
+                                  # hits a error, but the content that would
+                                  # have been logged is always dumped to
+                                  # stdout.
+        raise FEBioError(f"FEBio returned an error (return code = {proc.returncode}) while running {pth_feb}; check {pth_log}.")
+    return proc.returncode
 
 
 def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
