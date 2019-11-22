@@ -114,6 +114,7 @@ def plot_timeseries_var(timeseries, varname, dir_out):
     par1.set_xlabel("Step")
     host.set_title(varname)
     fig.savefig(os.path.join(dir_out, f"timeseries_var={varname}.svg"))
+    plt.close(fig)
 
 
 def plot_timeseries_vars(timeseries, dir_out):
