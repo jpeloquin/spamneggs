@@ -97,22 +97,11 @@ def plot_timeseries_var(timeseries, varname, dir_out):
     time = timeseries["Time"]
     values = timeseries[varname]
     # Plot the lone variable in the table on a single axes
-    fig = plt.figure()
-    host = HostAxes(fig, [0.125, 0.2, 0.825, 0.7])
-    par1 = ParasiteAxes(host, sharey=host)
-    p_time = host.plot(time, values, marker=".")
-    p_step = par1.plot(step, values, visible=False)
-    fig.add_axes(host)
-    host.parasites.append(par1)
-    host.set_xlim(0, max(time))
-    par1.set_xlim(0, max(step))
-    new_axisline = par1.get_grid_helper().new_fixed_axis
-    par1.axis["bottom2"] = new_axisline(loc="bottom", axes=par1, offset=(0, -35))
-    par1.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    host.set_xlabel("Time")
-    host.set_ylabel(varname)
-    par1.set_xlabel("Step")
-    host.set_title(varname)
+    fig, ax = plt.subplots()
+    ax.plot(time, values, marker=".")
+    ax.set_xlabel("Time")
+    ax.set_ylabel(varname)
+    ax.set_title(varname)
     fig.savefig(os.path.join(dir_out, f"timeseries_var={varname}.svg"))
     plt.close(fig)
 
@@ -140,8 +129,6 @@ def plot_timeseries_vars(timeseries, dir_out):
                             legend=False)
     for nm, ax in zip(nms_yaxis, axarr):
         ax.set_ylabel(nm)
-    # Possible future improvement: Add parasite axis for time step ID:
-    # https://stackoverflow.com/questions/50521914/
     fig = axarr[0].figure
     axarr[-1].set_xlabel(nm_xaxis)
     fig.tight_layout()
