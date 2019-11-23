@@ -276,13 +276,13 @@ def gen_single_analysis(pth, dir_out="."):
     return pth_out
 
 
-def tabulate_single_analysis(parent_file, case_file):
+def tabulate_case(analysis_file, case_file):
     """Tabulate variables for single case analysis."""
-    parent_file = Path(parent_file)
+    analysis_file = Path(analysis_file)
     case_file = Path(case_file)
-    parent_tree = read_febio_xml(str(parent_file))
-    case_tree = read_febio_xml(str(case_file))
-    analysis_name = get_analysis_name(parent_tree)
+    analysis_tree = read_febio_xml(analysis_file)
+    case_tree = read_febio_xml(case_file)
+    analysis_name = get_analysis_name(analysis_tree)
     # Read the plotfile
     pth_xplt = case_file.with_suffix(".xplt")
     with open(pth_xplt, "rb") as f:
@@ -300,7 +300,7 @@ def tabulate_single_analysis(parent_file, case_file):
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {},
               "time series variables": {}}
-    for e in parent_tree.findall("preprocessor/analysis/var"):
+    for e in analysis_tree.findall("preprocessor/analysis/var"):
         var_info = parse_var_selector(e.text)
         if e.attrib["source"] == "plotfile":
             # Get ID for region selector
@@ -380,12 +380,14 @@ def tabulate_single_analysis(parent_file, case_file):
     return record, tab_timeseries
 
 
-def gen_sensitivity_cases(tree, nlevels, dir_out="."):
+def gen_sensitivity_cases(tree, nlevels, dir_out=None):
     """Return table of cases for sensitivity analysis."""
-    dir_out = Path(dir_out)
+    analysis_name = get_analysis_name(tree)
+    if dir_out is None:
+        dir_out = Path(analysis_name)
     if not dir_out.exists():
         dir_out.mkdir()
-    analysis = {"name": get_analysis_name(tree),
+    analysis = {"name": analysis_name,
                 "directory": dir_out,
                 "FEBio output": get_output_reqs(tree)}
     cases = []
@@ -452,6 +454,12 @@ def gen_sensitivity_cases(tree, nlevels, dir_out="."):
         with open(pth, "wb") as f:
             write_febio_xml(tree, f)
         feb_paths.append(pth)
+    # TODO: Figure out same way to demarcate parameters from other
+    # metadata so there are no reserved parameter names.  For example, a
+    # user should be able to name their parameter "path" without
+    # conflicts.
     cases["path"] = feb_paths
     cases = pd.DataFrame(cases)
-    return cases
+    pth_cases = dir_out / f"{analysis_name}.csv"
+    cases.to_csv(pth_cases, index_label="case")
+    return cases, pth_cases

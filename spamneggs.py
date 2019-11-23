@@ -1,22 +1,96 @@
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
 import subprocess
+# Third-party packages
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 import numpy as np
-from warnings import warn
-# Third-party packages
 import pandas as pd
+import scipy.stats
 # Same-package modules
+from . import febioxml as fx
+from .febioxml import tabulate_case
+from .febioxml import read_febio_xml as read_xml
 from .variables import *
 
 
 class FEBioError(Exception):
     """Raised when an FEBio simulation terminates in an error."""
     pass
+
+
+def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
+                         dir_out=None):
+    """Run a sensitivity analysis from spam-infused FEBio XML."""
+    # Validate input
+    on_failure_allowed = ("error", "hold", "skip")
+    if not on_failure in on_failure_allowed:
+        raise ValueError(f"on_failure = {on_failure}; allowed values are {','.join(on_failure_allowed)}")
+    # Generate the cases
+    tree = read_xml(analysis_file)
+    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
+                              "analysis").attrib["name"]
+    if dir_out is None:
+        dir_out = Path(analysis_name)
+    cases, pth_cases_table = fx.gen_sensitivity_cases(tree, nlevels,
+                                                      dir_out=dir_out)
+    # Run the cases
+    continue_to_analysis = True
+    run_status = [None for i in range(len(cases))]
+    for i, (rid, case) in enumerate(cases.iterrows()):
+        try:
+            run_case(case["path"])
+        except FEBioError as err:
+            run_status[i] = "error"
+            if on_failure == "error":
+                raise err
+        run_status[i] = "completed"
+    cases["status"] = run_status
+    cases.to_csv(pth_cases_table)
+    # Check if error terminations prevent continuation
+    m_error = cases["status"] == "error"
+    if np.sum(m_error):
+        if on_failure == "skip":
+            cases = cases[np.logical_not(m_error)]
+        elif on_failure == "hold":
+            raise Exception(f"{np.sum(m_error)} cases terminated in an error.  Because `on_failure` = {on_failure}, the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.")
+    # Tabulate and plot the results
+    for case_file in cases["path"]:
+        tabulate_case_write(analysis_file, case_file)
+    make_sensitivity_figures(analysis_file)
+
+
+def read_case_data(case_file):
+    """Read variables from a single case analysis."""
+    case_file = Path(case_file)
+    pth_record = case_file.parent / f"{case_file.stem}_output" / "vars.json"
+    pth_timeseries = case_file.parent / f"{case_file.stem}_output" / "timeseries_vars.csv"
+    with open(pth_record, "r") as f:
+        record = json.load(f)
+    timeseries = pd.read_csv(pth_timeseries, index_col=False)
+    return record, timeseries
+
+
+def tabulate_case_write(analysis_file, case_file, dir_out=None):
+    """Tabulate variables for single case analysis & write to disk."""
+    analysis_file = Path(analysis_file)
+    case_file = Path(case_file)
+    record, timeseries = tabulate_case(analysis_file, case_file)
+    analysis_tree = read_xml(analysis_file)
+    analysis_name = fx.get_analysis_name(analysis_tree)
+    if dir_out is None:
+        dir_out = case_file.parent / f"{case_file.stem}_output"
+    if not os.path.exists(dir_out):
+        os.makedirs(dir_out)
+    with open(os.path.join(dir_out, "vars.json"), "w") as f:
+        write_record_to_json(record, f)
+    timeseries.to_csv(os.path.join(dir_out, "timeseries_vars.csv"), index=False)
+    plot_timeseries_vars(timeseries, dir_out=dir_out)
+    return record, timeseries
 
 
 def run_case(pth_feb):
@@ -35,6 +109,76 @@ def run_case(pth_feb):
                                   # stdout.
         raise FEBioError(f"FEBio returned an error (return code = {proc.returncode}) while running {pth_feb}; check {pth_log}.")
     return proc.returncode
+
+
+def make_sensitivity_figures(analysis_file):
+    tree = read_xml(analysis_file)
+    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
+                              "analysis").attrib["name"]
+    pth_cases = Path(analysis_name) / f"{analysis_name}.csv"
+    cases = pd.read_csv(pth_cases, index_col=0)
+    cases = cases[cases["status"] == "completed"]
+    # TODO: Add a function to get the list of parameters and variables
+    # for an analysis up-front.  Extract the relevant code from
+    # tabulate_case.
+    param_names = [k for k in cases.columns
+                   if k not in ["case", "path", "status"]]
+    param_values = {k: cases[k] for k in param_names}
+    # Make scatter plot matrix for instantaneous variables
+    ivar_values = defaultdict(list)
+    record, tab_timeseries = read_case_data(cases["path"].iloc[0])
+    ivar_names = [nm for nm in record["instantaneous variables"]]
+    for i in cases.index:
+        # TODO: There is an opportunity for improvement here: We could
+        # preserve the tree from the first read of the analysis XML and
+        # re-use it here instead of re-reading the analysis XML for
+        # every case.  However, to do this the case generation must not
+        # alter the analysis XML tree.
+        record, tab_timeseries = read_case_data(cases["path"].loc[i])
+        for nm in ivar_names:
+            ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
+    # Instantaneous variables: Scatter plots of variable vs. parameter
+    npanels_w = len(param_names) + 1
+    npanels_h = len(ivar_names) + 1
+    fig, axarr = plt.subplots(npanels_h, npanels_w, sharex="col",
+                              sharey="row")
+    fig.set_size_inches(1.8*npanels_w + 1, 2*npanels_h + 1)
+    # Scatter plots
+    for j, param in enumerate(param_names):
+        for i, var in enumerate(ivar_names):
+            axarr[i+1, j].scatter(param_values[param], ivar_values[var])
+    # Marginal distribution plots
+    for j, param in enumerate(param_names):
+        ax = axarr[0, j]
+        ax.hist(param_values[param], bins=10)
+        ax.spines['left'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if j > 0:
+            ax.tick_params(axis="y", left=False)
+    axarr[0, 0].set_ylabel("Count")
+    for i, var in enumerate(ivar_names):
+        ax = axarr[i+1, -1]
+        ax.hist(ivar_values[var], bins=9,
+                            range=axarr[i+1, 0].get_ylim(),
+                            orientation="horizontal")
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        if i < len(ivar_names):
+            ax.tick_params(axis="x", bottom=False)
+    axarr[-1, -1].set_xlabel("Count")
+    axarr[0, -1].axis("off")
+    # Set axis labels
+    for i, var in enumerate(ivar_names):
+        axarr[i+1, 0].set_ylabel(var)
+    for j, param in enumerate(param_names):
+        axarr[-1, j].set_xlabel(param)
+    # Save figure
+    fig.tight_layout()
+    fig.savefig(Path(analysis_name) /
+                f"{analysis_name}_-_inst_var_scatterplot_matrix.svg")
+    plt.close(fig)
 
 
 def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
