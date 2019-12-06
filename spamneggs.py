@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 # Third-party packages
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.figure import Figure
 from matplotlib import ticker
 from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
@@ -137,9 +139,14 @@ def make_sensitivity_figures(analysis_file):
         record, tab_timeseries = read_case_data(cases["path"].loc[i])
         for nm in ivar_names:
             ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
+
     # Instantaneous variables: Scatter plots of variable vs. parameter
+    #
+    # Instantaneous variables: Matrix of variable vs. parameter scatter
+    # plots
     npanels_w = len(param_names) + 1
     npanels_h = len(ivar_names) + 1
+    hist_nbins = 9
     fig, axarr = plt.subplots(npanels_h, npanels_w, sharex="col",
                               sharey="row")
     fig.set_size_inches(1.8*npanels_w + 1, 2*npanels_h + 1)
@@ -159,7 +166,7 @@ def make_sensitivity_figures(analysis_file):
     axarr[0, 0].set_ylabel("Count")
     for i, var in enumerate(ivar_names):
         ax = axarr[i+1, -1]
-        ax.hist(ivar_values[var], bins=9,
+        ax.hist(ivar_values[var], bins=hist_nbins,
                             range=axarr[i+1, 0].get_ylim(),
                             orientation="horizontal")
         ax.spines['bottom'].set_visible(False)
@@ -179,6 +186,32 @@ def make_sensitivity_figures(analysis_file):
     fig.savefig(Path(analysis_name) /
                 f"{analysis_name}_-_inst_var_scatterplot_matrix.svg")
     plt.close(fig)
+    #
+    # Instantaneous variables: Standalone variable vs. parameter scatter plots
+    for param in param_names:
+        for var in ivar_names:
+            fig = Figure()
+            FigureCanvas(fig)
+            ax = fig.add_subplot(111)
+            ax.scatter(param_values[param], ivar_values[var])
+            ax.set_ylabel(var)
+            ax.set_xlabel(param)
+            fig.tight_layout()
+            fig.savefig(Path(analysis_name) /
+                        f"{analysis_name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
+    #
+    # Instantaneous variables: Standalone variable & parameter histograms
+    for data in (param_values, ivar_values):
+        for nm in data:
+            fig = Figure()
+            FigureCanvas(fig)
+            ax = fig.add_subplot(111)
+            ax.hist(data[nm], bins=hist_nbins)
+            ax.set_xlabel(nm)
+            ax.set_ylabel("Count")
+            fig.tight_layout()
+            fig.savefig(Path(analysis_name) /
+                        f"{analysis_name}_-_distribution_-_{nm}.svg")
 
 
 def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
