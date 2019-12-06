@@ -26,7 +26,7 @@ class FEBioError(Exception):
 
 
 def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
-                         dir_out=None):
+                         analysis_dir=None):
     """Run a sensitivity analysis from spam-infused FEBio XML."""
     # Validate input
     on_failure_allowed = ("error", "hold", "skip")
@@ -36,16 +36,16 @@ def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
     tree = read_xml(analysis_file)
     analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
                               "analysis").attrib["name"]
-    if dir_out is None:
-        dir_out = Path(analysis_name)
+    if analysis_dir is None:
+        analysis_dir = Path(analysis_name)
     cases, pth_cases_table = fx.gen_sensitivity_cases(tree, nlevels,
-                                                      dir_out=dir_out)
+                                                      analysis_dir=analysis_dir)
     # Run the cases
     continue_to_analysis = True
     run_status = [None for i in range(len(cases))]
     for i, (rid, case) in enumerate(cases.iterrows()):
         try:
-            run_case(case["path"])
+            run_case(analysis_dir / case["path"])
         except FEBioError as err:
             run_status[i] = "error"
             if on_failure == "error":
@@ -62,15 +62,17 @@ def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
             raise Exception(f"{np.sum(m_error)} cases terminated in an error.  Because `on_failure` = {on_failure}, the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.")
     # Tabulate and plot the results
     for case_file in cases["path"]:
-        tabulate_case_write(analysis_file, case_file)
+        tabulate_case_write(analysis_file, analysis_dir / case_file,
+                            dir_out = analysis_dir / "case_output")
     make_sensitivity_figures(analysis_file)
 
 
 def read_case_data(case_file):
     """Read variables from a single case analysis."""
     case_file = Path(case_file)
-    pth_record = case_file.parent / f"{case_file.stem}_output" / "vars.json"
-    pth_timeseries = case_file.parent / f"{case_file.stem}_output" / "timeseries_vars.csv"
+    output_dir = case_file.parent / ".." / "case_output"
+    pth_record = output_dir / f"{case_file.stem}_vars.json"
+    pth_timeseries = output_dir / f"{case_file.stem}_timeseries_vars.csv"
     with open(pth_record, "r") as f:
         record = json.load(f)
     timeseries = pd.read_csv(pth_timeseries, index_col=False)
@@ -81,17 +83,22 @@ def tabulate_case_write(analysis_file, case_file, dir_out=None):
     """Tabulate variables for single case analysis & write to disk."""
     analysis_file = Path(analysis_file)
     case_file = Path(case_file)
+    # Find/create output directory
+    if dir_out is None:
+        dir_out = case_file.parent
+    else:
+        dir_out = Path(dir_out)
+    if not dir_out.exists():
+        dir_out.mkdir()
+    # Tabulate the case's variables
     record, timeseries = tabulate_case(analysis_file, case_file)
     analysis_tree = read_xml(analysis_file)
     analysis_name = fx.get_analysis_name(analysis_tree)
-    if dir_out is None:
-        dir_out = case_file.parent / f"{case_file.stem}_output"
-    if not os.path.exists(dir_out):
-        os.makedirs(dir_out)
-    with open(os.path.join(dir_out, "vars.json"), "w") as f:
+    with open(dir_out / f"{case_file.stem}_vars.json", "w") as f:
         write_record_to_json(record, f)
-    timeseries.to_csv(os.path.join(dir_out, "timeseries_vars.csv"), index=False)
-    plot_timeseries_vars(timeseries, dir_out=dir_out)
+    timeseries.to_csv(dir_out / f"{case_file.stem}_timeseries_vars.csv",
+                      index=False)
+    plot_timeseries_vars(timeseries, dir_out=dir_out, casename=case_file.stem)
     return record, timeseries
 
 
@@ -117,7 +124,8 @@ def make_sensitivity_figures(analysis_file):
     tree = read_xml(analysis_file)
     analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
                               "analysis").attrib["name"]
-    pth_cases = Path(analysis_name) / f"{analysis_name}.csv"
+    analysis_dir = Path(analysis_name)
+    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "completed"]
     # TODO: Add a function to get the list of parameters and variables
@@ -128,7 +136,8 @@ def make_sensitivity_figures(analysis_file):
     param_values = {k: cases[k] for k in param_names}
     # Make scatter plot matrix for instantaneous variables
     ivar_values = defaultdict(list)
-    record, tab_timeseries = read_case_data(cases["path"].iloc[0])
+    record, tab_timeseries = read_case_data(analysis_dir /
+                                            cases["path"].iloc[0])
     ivar_names = [nm for nm in record["instantaneous variables"]]
     for i in cases.index:
         # TODO: There is an opportunity for improvement here: We could
@@ -136,7 +145,8 @@ def make_sensitivity_figures(analysis_file):
         # re-use it here instead of re-reading the analysis XML for
         # every case.  However, to do this the case generation must not
         # alter the analysis XML tree.
-        record, tab_timeseries = read_case_data(cases["path"].loc[i])
+        record, tab_timeseries = read_case_data(analysis_dir /
+                                                cases["path"].loc[i])
         for nm in ivar_names:
             ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
 
@@ -183,7 +193,7 @@ def make_sensitivity_figures(analysis_file):
         axarr[-1, j].set_xlabel(param)
     # Save figure
     fig.tight_layout()
-    fig.savefig(Path(analysis_name) /
+    fig.savefig(analysis_dir /
                 f"{analysis_name}_-_inst_var_scatterplot_matrix.svg")
     plt.close(fig)
     #
@@ -197,7 +207,7 @@ def make_sensitivity_figures(analysis_file):
             ax.set_ylabel(var)
             ax.set_xlabel(param)
             fig.tight_layout()
-            fig.savefig(Path(analysis_name) /
+            fig.savefig(analysis_dir /
                         f"{analysis_name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
     #
     # Instantaneous variables: Standalone variable & parameter histograms
@@ -210,7 +220,7 @@ def make_sensitivity_figures(analysis_file):
             ax.set_xlabel(nm)
             ax.set_ylabel("Count")
             fig.tight_layout()
-            fig.savefig(Path(analysis_name) /
+            fig.savefig(analysis_dir /
                         f"{analysis_name}_-_distribution_-_{nm}.svg")
 
 
@@ -286,31 +296,26 @@ def write_record_to_json(record, f):
               cls=NDArrayJSONEncoder)
 
 
-def plot_timeseries_var(timeseries, varname, dir_out):
-    """Plot time series variable and write the plot to disk.
-
-    This function is meant for automated sensitivity analysis.  Plots
-    will be written to disk using the standard spamneggs naming
-    conventions.
-
-    TODO: Provide a companion function that just returns the plot
-    handle, allowing customization.
-
-    """
+def plot_timeseries_var(timeseries, varname, casename=None):
+    """Return line plot of time series variable."""
     step = timeseries["Step"]
     time = timeseries["Time"]
     values = timeseries[varname]
     # Plot the lone variable in the table on a single axes
-    fig, ax = plt.subplots()
+    fig = Figure()
+    FigureCanvas(fig)
+    ax = fig.add_subplot(111)
     ax.plot(time, values, marker=".")
     ax.set_xlabel("Time")
     ax.set_ylabel(varname)
-    ax.set_title(varname)
-    fig.savefig(os.path.join(dir_out, f"timeseries_var={varname}.svg"))
-    plt.close(fig)
+    if casename is not None:
+        ax.set_title(f"{casename} {varname}")
+    else:
+        ax.set_title(varname)
+    return fig
 
 
-def plot_timeseries_vars(timeseries, dir_out):
+def plot_timeseries_vars(timeseries, dir_out, casename=None):
     """Plot time series variables and write the plots to disk.
 
     This function is meant for automated sensitivity analysis.  Plots
@@ -321,6 +326,11 @@ def plot_timeseries_vars(timeseries, dir_out):
     handle, allowing customization.
 
     """
+    dir_out = Path(dir_out)
+    if casename is None:
+        stem = ""
+    else:
+        stem = casename + "_"
     if not isinstance(timeseries, pd.DataFrame):
         timeseries = pd.DataFrame(timeseries)
     if len(timeseries) == 0:
@@ -334,11 +344,14 @@ def plot_timeseries_vars(timeseries, dir_out):
     for nm, ax in zip(nms_yaxis, axarr):
         ax.set_ylabel(nm)
     fig = axarr[0].figure
+    if casename is not None:
+        axarr[0].set_title(casename)
     axarr[-1].set_xlabel(nm_xaxis)
     fig.tight_layout()
-    fig.savefig(os.path.join(dir_out, "timeseries_vars.svg"))
+    fig.savefig(dir_out / f"{stem}timeseries_vars.svg")
     plt.close(fig)
     # Produce one small plot for each variable
     timeseries = timeseries.reset_index()
     for nm in nms_yaxis:
-        plot_timeseries_var(timeseries, nm, dir_out)
+        fig = plot_timeseries_var(timeseries, nm, casename)
+        fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")

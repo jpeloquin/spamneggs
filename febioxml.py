@@ -380,15 +380,21 @@ def tabulate_case(analysis_file, case_file):
     return record, tab_timeseries
 
 
-def gen_sensitivity_cases(tree, nlevels, dir_out=None):
+def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     """Return table of cases for sensitivity analysis."""
     analysis_name = get_analysis_name(tree)
-    if dir_out is None:
-        dir_out = Path(analysis_name)
-    if not dir_out.exists():
-        dir_out.mkdir()
+    # Figure out which directory contains all the files for the analysis
+    if analysis_dir is None:
+        analysis_dir = Path(analysis_name)
+    if not analysis_dir.exists():
+        analysis_dir.mkdir()
+    # Create a subdirectory for the FEBio files
+    cases_dir = analysis_dir / "cases"
+    if not cases_dir.exists():
+        cases_dir.mkdir()
+    # Generate the cases
     analysis = {"name": analysis_name,
-                "directory": dir_out,
+                "directory": analysis_dir,
                 "FEBio output": get_output_reqs(tree)}
     cases = []
     # Find all the variable parameters (at the moment, just <scalar>
@@ -450,16 +456,16 @@ def gen_sensitivity_cases(tree, nlevels, dir_out=None):
         insert_output_elem(tree, *analysis["FEBio output"],
                            file_stem=file_stem)
         # Write the modified XML to disk
-        pth = analysis["directory"] / f"{file_stem}.feb"
+        pth = cases_dir / f"{file_stem}.feb"
         with open(pth, "wb") as f:
             write_febio_xml(tree, f)
-        feb_paths.append(pth)
+        feb_paths.append(pth.relative_to(analysis_dir))
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
     # conflicts.
     cases["path"] = feb_paths
     cases = pd.DataFrame(cases)
-    pth_cases = dir_out / f"{analysis_name}.csv"
+    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases.to_csv(pth_cases, index_label="case")
     return cases, pth_cases
