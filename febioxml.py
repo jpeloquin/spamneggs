@@ -196,30 +196,14 @@ def insert_output_elem(tree, logfile_selections, plotfile_selections,
     if len(e_logfile.getchildren()) > 0:
         e_output.append(e_logfile)
     # Insert plotfile-related XML elements into FEBio XML
-    if len(plotfile_selections) > 0:
-        # Re-use the existing plotfile element if the file name matches
-        e_plotfile = None
-        plotfile_name = f"{file_stem}.xplt"
-        for e in e_output.findall("plotfile"):
-            if "file" not in e.attrib:
-                existing_name = file_stem + ".xplt"
-            else:
-                existing_name = e.attrib["file"]
-            if existing_name == plotfile_name:
-                if e_plotfile is None:
-                    # Re-use the existing output element
-                    e_plotfile = e
-                    e_plotfile.attrib["file"] = plotfile_name
-                    # ^ if output file name is omitted (default), make it concrete
-                else:
-                    # More than one <plotfile> element is pointing at
-                    # the same file
-                    raise ValueError(f"More than one <plotfile> element has `{plotfile_name}` as its output target.  Use a unique file name for each <plotfile> element.")
-        # If no suitable existing plotfile element was found, create a
-        # new one.
-        if e_plotfile is None:
-            e_plotfile = etree.SubElement(e_output, "plotfile",
-                                          file=plotfile_name)
+    # Re-use the existing plotfile element; FEBio doesn't respect
+    # the file name attribute and will only ever output one
+    # plotfile.
+    existing = set(e_output.xpath("plotfile/var/@type"))
+    plotfile_selections = existing | set(plotfile_selections)
+    for e in e_output.findall("plotfile"):
+        e.getparent().remove(e)
+    e_plotfile = etree.SubElement(e_output, "plotfile")
     for v in plotfile_selections:
         etree.SubElement(e_plotfile, "var", type=v)
 
