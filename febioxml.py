@@ -253,6 +253,27 @@ def get_analysis_name(tree):
     return name
 
 
+def get_parameters(tree):
+    # Find all of the variable parameters (at the moment, just <scalar>
+    # elements) in the tree.  Note: This function somewhat overlaps in
+    # purpose with code in gen_sensitivity_cases, but that code has to
+    # keep track of the XML elements for each parameter.  If an Analysis
+    # class is ever created, it should subsume this functionality.
+    e_scalars = tree.findall(".//scalar")
+    parameters = []
+    for e_scalar in e_scalars:
+        # Get path of parent element
+        parent_path = tree.getelementpath(e_scalar.getparent())
+        # Get / make up name for variable
+        try:
+            pname = e_scalar.attrib["name"]
+        except KeyError:
+            pname = parent_path
+        # Store metadata about the variable
+        parameters.append(pname)
+    return parameters
+
+
 def gen_single_analysis(pth, dir_out="."):
     """Generate FEBio XML for single case analysis."""
     # Read the relevant analysis parameters and variables
