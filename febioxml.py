@@ -262,7 +262,7 @@ def get_parameters(tree):
         # Store metadata about the variable
         parameters[pname] = {"xml_parent": parent_path,
                              "nominal": nominal,
-                             "distribution": scalar_from_xml(e_scalar)}
+                             "distribution": scalar_from_xml(e_scalar, nominal)}
     return parameters
 
 
