@@ -244,7 +244,7 @@ def get_parameters(tree):
     # keep track of the XML elements for each parameter.  If an Analysis
     # class is ever created, it should subsume this functionality.
     e_scalars = tree.findall(".//scalar")
-    parameters = []
+    parameters = {}
     for e_scalar in e_scalars:
         # Get path of parent element
         parent_path = tree.getelementpath(e_scalar.getparent())
@@ -253,8 +253,16 @@ def get_parameters(tree):
             pname = e_scalar.attrib["name"]
         except KeyError:
             pname = parent_path
+        # Get variable's nominal value
+        e_nominal = e_scalar.find("nominal")
+        if e_nominal is None:
+            nominal = None
+        else:
+            nominal = e_nominal.text.strip()
         # Store metadata about the variable
-        parameters.append(pname)
+        parameters[pname] = {"xml_parent": parent_path,
+                             "nominal": nominal,
+                             "distribution": scalar_from_xml(e_scalar)}
     return parameters
 
 
@@ -406,25 +414,7 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     # elements) in the tree, and remember position of each in the tree by
     # storing the path to its parent element.
     e_scalars = tree.findall(".//scalar")
-    variables = {}
-    for e_scalar in e_scalars:
-        # Get path of parent element
-        parent_path = tree.getelementpath(e_scalar.getparent())
-        # Get / make up name for variable
-        try:
-            varname = e_scalar.attrib["name"]
-        except KeyError:
-            varname = parent_path
-        # Get variable's nominal value
-        e_nominal = e_scalar.find("nominal")
-        if e_nominal is None:
-            nominal = None
-        else:
-            nominal = e_nominal.text.strip()
-        # Store metadata about the variable
-        variables[varname] = {"parent": parent_path,
-                              "nominal": nominal,
-                              "var": scalar_from_xml(e_scalar)}
+    parameters = get_parameters(tree)
     # Remove all the preprocessor elements; FEBio can't handle them.
     # This also replaces each variable with its nominal value, but they
     # will be changed later.
@@ -433,14 +423,14 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     # variable parameter
     colnames = []
     levels = {}
-    for varname, mdata in variables.items():
-        colnames.append(varname)
-        var = mdata["var"]
+    for pname, mdata in parameters.items():
+        colnames.append(pname)
+        param = mdata["distribution"]
         # Calculate variable's levels
-        if isinstance(var, ContinuousScalar):
-            levels[varname] = var.sensitivity_levels(nlevels)
-        elif isinstance(var, CategoricalScalar):
-            levels[varname] = var.sensitivity_levels()
+        if isinstance(param, ContinuousScalar):
+            levels[pname] = param.sensitivity_levels(nlevels)
+        elif isinstance(param, CategoricalScalar):
+            levels[pname] = param.sensitivity_levels()
         else:
             raise ValueError(f"Generating levels from a variable of type `{type(var)}` is not yet supported.")
     cases = pd.DataFrame({k: v for k, v in zip(colnames,
@@ -449,11 +439,11 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     # Modify the parameters in the XML and write the modified XML to disk
     feb_paths = []
     for i, case in cases.iterrows():
-        for varname in colnames:
+        for pname in colnames:
             # Alter the model parameters to match the current case
-            e_parameter = tree.find(variables[varname]["parent"])
+            e_parameter = tree.find(parameters[pname]["xml_parent"])
             assert(e_parameter is not None)
-            e_parameter.text = str(case[varname])
+            e_parameter.text = str(case[pname])
         # Add the needed elements in <Output> to support the requested
         # variables.  We have to do this for each case because the
         # output file names are case-dependent.
