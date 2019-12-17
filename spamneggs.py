@@ -4,10 +4,13 @@ import os
 from pathlib import Path
 import subprocess
 # Third-party packages
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib import ticker
+from matplotlib.colors import DivergingNorm
+from matplotlib.cm import ScalarMappable
 from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 import numpy as np
@@ -15,6 +18,7 @@ import pandas as pd
 import scipy.stats
 # Same-package modules
 from . import febioxml as fx
+from . import colors
 from .febioxml import tabulate_case
 from .febioxml import read_febio_xml as read_xml
 from .variables import *
@@ -153,6 +157,7 @@ def make_sensitivity_figures(analysis_file):
     record, tab_timeseries = read_case_data(analysis_dir /
                                             cases["path"].iloc[0])
     ivar_names = [nm for nm in record["instantaneous variables"]]
+    tvar_names = [nm for nm in record["time series variables"]]
     for i in cases.index:
         # TODO: There is an opportunity for improvement here: We could
         # preserve the tree from the first read of the analysis XML and
@@ -236,6 +241,59 @@ def make_sensitivity_figures(analysis_file):
             fig.tight_layout()
             fig.savefig(analysis_dir /
                         f"{analysis_name}_-_distribution_-_{nm}.svg")
+    #
+    # Time series variables: line plots with parameters coded by weight & color
+    #
+    # TODO: Find the reference case; the one with all parameters equal
+    # to their nominal values.  This means either storing the reference
+    # case when the cases are generated or adding a function to
+    # calculate and return the nominal values for each variable parameter.
+    #
+    cen = {}
+    levels = {}
+    for p in param_values:
+        levels[p] = sorted(set(param_values[p]))
+        cen[p] = levels[p][len(levels[p]) // 2]
+    m_cen = np.ones(len(cases), dtype="bool")
+    for p, v in param_values.items():
+        m_cen = np.logical_and(m_cen, v == cen[p])
+    ind = {}
+    for pname, pvalues in param_values.items():
+        cmap = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
+                                                  colors.diverging_bky_60_10_c30_n256)
+        cnorm = DivergingNorm(vmin=min(pvalues), vcenter=cen[pname],
+                              vmax=max(pvalues))
+        m_ind = np.ones(len(cases), dtype="bool")
+        for p_oth in set(param_values.keys()) - set([pname]):
+            m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
+        for varname in tvar_names:
+            fig = Figure()
+            fig.set_size_inches((5,4))
+            FigureCanvas(fig)
+            ax = fig.add_subplot(111)
+            ax.set_title(f"{varname} time series vs. {pname}")
+            ax.set_ylabel(varname)
+            ax.set_xlabel("Time")
+            # TODO: Plot parameter sensitivity for multiple variation
+            # Plot parameter sensitivity for independent variation
+            for case_id in cases.index[m_ind]:
+                record, tab_timeseries = read_case_data(analysis_dir /
+                                                        cases["path"].loc[case_id])
+                ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
+                        color=cmap(cnorm(pvalues.loc[case_id])))
+            # Plot central case
+            case_id = cases.index[m_cen][0]
+            record, tab_timeseries = read_case_data(analysis_dir /
+                                                    cases["path"].loc[case_id])
+            ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
+                    color=cmap(cnorm(cen[pname])))
+            cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=cmap))
+            cbar.set_label(pname)
+            fig.tight_layout()
+            fig.savefig(analysis_dir /
+                       "_-_".join((analysis_name,
+                                   "timeseries_var_lineplot",
+                                   f"{varname}_vs_{pname}.svg")))
 
 
 def sensitivity_loc_ind_curve(solve, cen, incr, dir_out,
