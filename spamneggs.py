@@ -65,23 +65,7 @@ def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
         elif on_failure == "hold":
             raise Exception(f"{np.sum(m_error)} cases terminated in an error.  Because `on_failure` = {on_failure}, the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.")
     # Tabulate and plot the results
-    tree = read_xml(analysis_file)  # re-read b/c gen_sensitivity_cases modifies tree
-    parameters = fx.get_parameters(tree)
-    ivars_table = defaultdict(list)
-    for i in cases.index:
-        record, timeseries = tabulate_case_write(analysis_file,
-                                                 analysis_dir / cases["path"].loc[i],
-                                                 dir_out=analysis_dir / "case_output")
-        ivars_table["case"].append(i)
-        for p in parameters:
-            k = f"{p} [param]"
-            ivars_table[k].append(cases[p].loc[i])
-        for v in record["instantaneous variables"]:
-            k = f"{v} [var]"
-            ivars_table[k].append(record["instantaneous variables"][v]["value"])
-    ivars_table = pd.DataFrame(ivars_table).set_index("case")
-    ivars_table.to_csv(analysis_dir / f"{analysis_name}_-_inst_vars.csv",
-                       index=True)
+    tabulate_analysis(analysis_file)
     make_sensitivity_figures(analysis_file)
 
 
@@ -136,6 +120,31 @@ def run_case(pth_feb):
                                   # stdout.
         raise FEBioError(f"FEBio returned an error (return code = {proc.returncode}) while running {pth_feb}; check {pth_log}.")
     return proc.returncode
+
+
+def tabulate_analysis(analysis_file):
+    """Tabulate output from an analysis."""
+    tree = read_xml(analysis_file)  # re-read b/c gen_sensitivity_cases modifies tree
+    parameters = fx.get_parameters(tree)
+    ivars_table = defaultdict(list)
+    analysis_name = fx.get_analysis_name(tree)
+    analysis_dir = Path(analysis_name)
+    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
+    cases = pd.read_csv(pth_cases, index_col=0)
+    for i in cases.index:
+        record, timeseries = tabulate_case_write(analysis_file,
+                                                 analysis_dir / cases["path"].loc[i],
+                                                 dir_out=analysis_dir / "case_output")
+        ivars_table["case"].append(i)
+        for p in parameters:
+            k = f"{p} [param]"
+            ivars_table[k].append(cases[p].loc[i])
+        for v in record["instantaneous variables"]:
+            k = f"{v} [var]"
+            ivars_table[k].append(record["instantaneous variables"][v]["value"])
+    ivars_table = pd.DataFrame(ivars_table).set_index("case")
+    ivars_table.to_csv(analysis_dir / f"{analysis_name}_-_inst_vars.csv",
+                       index=True)
 
 
 def make_sensitivity_figures(analysis_file):
