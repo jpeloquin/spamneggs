@@ -151,7 +151,7 @@ def make_sensitivity_figures(analysis_file):
     tree = read_xml(analysis_file)
     analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
                               "analysis").attrib["name"]
-    analysis_dir = Path(analysis_name)
+    analysis_dir = Path(analysis_file).parent / analysis_name
     pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "completed"]
