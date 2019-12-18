@@ -15,7 +15,7 @@ from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 import numpy as np
 import pandas as pd
-import scipy.stats
+import scipy.cluster
 # Same-package modules
 from . import febioxml as fx
 from . import colors
@@ -102,6 +102,37 @@ def tabulate_case_write(analysis_file, case_file, dir_out=None):
                       index=False)
     plot_timeseries_vars(timeseries, dir_out=dir_out, casename=case_file.stem)
     return record, timeseries
+
+
+def tabulate_analysis_tsvars(analysis_file, cases_file):
+    """Tabulate time series variables for all cases in an analysis
+
+    The time series tables for the individual cases must have already
+    been written to disk.
+
+    """
+    # TODO: It would be beneficial to build up the whole-analysis time
+    # series table at the same time as case time series tables are
+    # written to disk, instead of re-reading everything from disk.
+    tree = read_xml(analysis_file)
+    analysis_name = fx.get_analysis_name(tree)
+    parameters = fx.get_parameters(tree)
+    pth_cases = Path(cases_file)
+    cases = pd.read_csv(cases_file, index_col=0)
+    analysis_data = pd.DataFrame()
+    for i in cases.index:
+        pth_tsvars = pth_cases.parent / "case_output" /\
+            f"{analysis_name}_-_case={i}_timeseries_vars.csv"
+        case_data = pd.read_csv(pth_tsvars)
+        varnames = set(case_data.columns) - set(["Time", "Step"])
+        case_data = case_data.rename({k: f"{k} [var]" for k in varnames},
+                                     axis=1)
+        case_data["Case"] = i
+        pcolnames = [f"{p} [param]" for p in parameters]
+        for pname, pcolname in zip(parameters, pcolnames):
+            case_data[pcolname] = cases[pname].loc[i]
+        analysis_data = pd.concat([analysis_data, case_data])
+    return analysis_data
 
 
 def run_case(pth_feb):
@@ -303,6 +334,64 @@ def make_sensitivity_figures(analysis_file):
                        "_-_".join((analysis_name,
                                    "timeseries_var_lineplot",
                                    f"{varname}_vs_{pname}.svg")))
+    #
+    # Time series variables: correlation of instantaneous values ~ parameters.
+    data = tabulate_analysis_tsvars(analysis_file, pth_cases)
+    params = [c for c in data.columns if c.endswith(" [param]")]
+    varnames = [c for c in data.columns if c.endswith(" [var]")]
+    data = data.drop("Time", axis=1).set_index(["Step", "Case"])
+    n = len(data.index.levels[0])
+    sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
+    for i in range(n):
+        corr = data.loc[i][params + varnames].corr()
+        for pi, pnm in enumerate(params):
+            for vi, vnm in enumerate(varnames):
+                sensitivity_vectors[vi][i][pi] = corr[pnm][vnm]
+    sensitivity_vectors = np.concatenate(sensitivity_vectors, axis=0)
+    # Plot heatmap
+    fig = Figure()
+    FigureCanvas(fig)
+    gs = mpl.gridspec.GridSpec(2, 2, figure=fig,
+                               height_ratios=[1, 5],
+                               width_ratios=[25, 1],
+                               hspace=0)
+    cmap = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
+                                              colors.diverging_bky_60_10_c30_n256)
+    cnorm = mpl.colors.Normalize(vmin=-1, vmax=1)
+    # Plot dendrogram
+    dn_ax = fig.add_subplot(gs[0,0])
+    dn_ax.axis("off")
+    links = scipy.cluster.hierarchy.linkage(
+        sensitivity_vectors[np.all(~np.isnan(sensitivity_vectors), axis=1)].T,
+        method="average",
+        metric="correlation")
+    dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax,
+                                            orientation="top")
+    # Plot heatmap
+    ax = fig.add_subplot(gs[1,0])
+    im = ax.imshow(sensitivity_vectors[:, dn["leaves"]],
+                   aspect="auto",
+                   origin="upper",
+                   interpolation="nearest",
+                   cmap=cmap, norm=cnorm,
+                   extent=(-0.5, len(params) - 0.5,
+                           -0.5, len(varnames) - 0.5))
+    ax.set_xticks([i for i in range(len(params))])
+    ax.set_xticklabels([params[i].rstrip(" [param]")
+                        for i in dn["leaves"]])
+    ax.set_xlabel("Parameters")
+    ax.set_yticks([i for i in reversed(range(len(varnames)))])
+    # ^ reversed b/c origin="upper"
+    ax.set_yticklabels([nm.rstrip(" [var]") for nm in varnames],
+                       {"rotation": "vertical"})
+    ax.set_ylabel("Time series variables")
+    # Add colorbar
+    cbar_ax = fig.add_subplot(gs[1,1])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label("Correlation coefficient")
+    # Write figure to disk
+    fig.tight_layout()
+    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_heatmap.svg")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
