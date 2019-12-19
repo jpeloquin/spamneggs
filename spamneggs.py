@@ -361,10 +361,11 @@ def make_sensitivity_figures(analysis_file):
     # Plot dendrogram
     dn_ax = fig.add_subplot(gs[0,0])
     dn_ax.axis("off")
-    links = scipy.cluster.hierarchy.linkage(
+    dist = scipy.spatial.distance.pdist(
         sensitivity_vectors[np.all(~np.isnan(sensitivity_vectors), axis=1)].T,
-        method="average",
         metric="correlation")
+    links = scipy.cluster.hierarchy.linkage(dist, method="average",
+                                            metric="correlation")
     dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax,
                                             orientation="top")
     # Plot heatmap
@@ -391,7 +392,31 @@ def make_sensitivity_figures(analysis_file):
     cbar.set_label("Correlation coefficient")
     # Write figure to disk
     fig.tight_layout()
-    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_heatmap.svg")
+    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_heatmap.svg")
+    #
+    # Plot the distance matrix.  Reorder the parameters to match the
+    # sensitivity vector plot.
+    dist = scipy.spatial.distance.squareform(dist[dn["leaves"]])
+    cmap = mpl.cm.get_cmap("cividis")
+    cnorm = mpl.colors.Normalize(vmin=0, vmax=1)
+    fig = Figure()
+    FigureCanvas(fig)
+    ax = fig.add_subplot(111)
+    im = ax.matshow(dist, cmap=cmap, norm=cnorm, origin="upper",
+                    extent=(-0.5, len(params) - 0.5,
+                            -0.5, len(params) - 0.5))
+    for (i, j), d in np.ndenumerate(np.flipud(dist)):
+        ax.text(j, i, '{:0.2f}'.format(d), ha='center', va='center')
+    cbar = fig.colorbar(im)
+    cbar.set_label("Distance correlation")
+    ax.set_title("Sensitivity vector distance matrix")
+    ax.set_xticks([i for i in range(len(params))])
+    ax.set_yticks([i for i in reversed(range(len(params)))])
+    # ^ reversed b/c origin="upper"
+    ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
+    ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
+    fig.tight_layout()
+    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_distance_matrix.svg")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
