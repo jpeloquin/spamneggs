@@ -208,7 +208,7 @@ def insert_output_elem(tree, logfile_selections, plotfile_selections,
         etree.SubElement(e_plotfile, "var", type=v)
 
 
-def strip_preprocessor_elems(tree):
+def strip_preprocessor_elems(tree, parameters):
     """Remove preprocessor elements from extended FEBio XML.
 
     The input tree is mutated in-place.
@@ -219,13 +219,11 @@ def strip_preprocessor_elems(tree):
     # Remove the <scalar> elements from the tree.
     for e in tree.findall(".//scalar"):
         parent = e.getparent()
-        e_nominal = e.find("nominal")
-        if e_nominal is None:
+        nominal_value = parameters[e.attrib["name"]]["nominal"]
+        if nominal_value is None:
             raise ValueError(f"Element `{tree.getelementpath(parent)}` in file `{tree.base}` has no nominal value defined.")
-        else:
-            nominal = e_nominal.text.strip()
         parent.remove(e)
-        parent.text = nominal
+        parent.text = nominal_value
 
 
 def get_analysis_name(tree):
@@ -244,26 +242,45 @@ def get_parameters(tree):
     # keep track of the XML elements for each parameter.  If an Analysis
     # class is ever created, it should subsume this functionality.
     e_scalars = tree.findall(".//scalar")
-    parameters = {}
-    for e_scalar in e_scalars:
-        # Get path of parent element
-        parent_path = tree.getelementpath(e_scalar.getparent())
+    parameters = {}  # Parameter name → distribution
+    parameter_locations = {}  # Parameter name → where it is is used in the XML
+    #
+    # Handle parameter definitions in <analysis>/<parameters>.  These
+    # definitions *must* be named; no automatic name generation is
+    # permitted.
+    for e_parameter in tree.findall("preprocessor/analysis/parameters/scalar"):
+        name = e_parameter.attrib["name"]
+        e_nominal = e_parameter.find("nominal")
+        if e_nominal is None:
+            nominal_value = None
+        else:
+            nominal_value = e_nominal.text.strip()
+        dist = scalar_from_xml(e_parameter, nominal_value)
+        parameters[name] = {"nominal": nominal_value,
+                            "distribution": dist}
+    #
+    # Handle in-place parameter definitions and parameter references.
+    for e_parameter in tree.xpath("*[not(name()='preprocessor')]//scalar"):
         # Get / make up name for variable
         try:
-            pname = e_scalar.attrib["name"]
+            name = e_parameter.attrib["name"]
         except KeyError:
-            pname = parent_path
-        # Get variable's nominal value
-        e_nominal = e_scalar.find("nominal")
-        if e_nominal is None:
-            nominal = None
-        else:
-            nominal = e_nominal.text.strip()
-        # Store metadata about the variable
-        parameters[pname] = {"xml_parent": parent_path,
-                             "nominal": nominal,
-                             "distribution": scalar_from_xml(e_scalar, nominal)}
-    return parameters
+            name = parent_path
+        # Store location of parameter usage
+        parent_path = tree.getelementpath(e_parameter.getparent())
+        parameter_locations.setdefault(name, []).append(parent_path)
+        if e_parameter.getchildren():
+            # The parameter element has child elements and is therefore
+            # both a parameter use and a parameter definition.
+            e_nominal = e_parameter.find("nominal")
+            if e_nominal is None:
+                nominal_value = None
+            else:
+                nominal_value = e_nominal.text.strip()
+            dist = scalar_from_xml(e_parameter, nominal_value)
+            parameters[name] = {"nominal": nominal_value,
+                                "distribution": dist}
+    return parameters, parameter_locations
 
 
 def gen_single_analysis(pth, dir_out="."):
@@ -414,11 +431,11 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     # elements) in the tree, and remember position of each in the tree by
     # storing the path to its parent element.
     e_scalars = tree.findall(".//scalar")
-    parameters = get_parameters(tree)
+    parameters, parameter_locations = get_parameters(tree)
     # Remove all the preprocessor elements; FEBio can't handle them.
     # This also replaces each variable with its nominal value, but they
     # will be changed later.
-    strip_preprocessor_elems(tree)
+    strip_preprocessor_elems(tree, parameters)
     # Generate list of cases based on combinations of levels for each
     # variable parameter
     colnames = []
@@ -441,7 +458,8 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     for i, case in cases.iterrows():
         for pname in colnames:
             # Alter the model parameters to match the current case
-            e_parameter = tree.find(parameters[pname]["xml_parent"])
+            for usage_path in parameter_locations[pname]:
+                e_parameter = tree.find(usage_path)
             assert(e_parameter is not None)
             e_parameter.text = str(case[pname])
         # Add the needed elements in <Output> to support the requested

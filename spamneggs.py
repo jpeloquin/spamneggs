@@ -116,7 +116,7 @@ def tabulate_analysis_tsvars(analysis_file, cases_file):
     # written to disk, instead of re-reading everything from disk.
     tree = read_xml(analysis_file)
     analysis_name = fx.get_analysis_name(tree)
-    parameters = fx.get_parameters(tree)
+    parameters, parameter_locs = fx.get_parameters(tree)
     pth_cases = Path(cases_file)
     cases = pd.read_csv(cases_file, index_col=0)
     analysis_data = pd.DataFrame()
@@ -156,7 +156,7 @@ def run_case(pth_feb):
 def tabulate_analysis(analysis_file):
     """Tabulate output from an analysis."""
     tree = read_xml(analysis_file)  # re-read b/c gen_sensitivity_cases modifies tree
-    parameters = fx.get_parameters(tree)
+    parameters, parameter_locs = fx.get_parameters(tree)
     ivars_table = defaultdict(list)
     analysis_name = fx.get_analysis_name(tree)
     analysis_dir = Path(analysis_name)
