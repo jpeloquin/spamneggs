@@ -136,6 +136,7 @@ def tabulate_analysis_tsvars(analysis_file, cases_file):
 
 
 def run_case(pth_feb):
+    pth_feb = Path(pth_feb)
     proc = subprocess.run(['febio', '-i', pth_feb.name],
                       cwd=Path(pth_feb).parent,  # FEBio always writes xplt to current dir
                       stdout=subprocess.PIPE,
@@ -143,7 +144,7 @@ def run_case(pth_feb):
     if proc.returncode != 0:
         # FEBio truly does return an error code on "Error Termination";
         # I checked.
-        pth_log = Path(pth_feb).with_suffix(".log")
+        pth_log = pth_feb.with_suffix(".log")
         with open(pth_log, "wb") as f:
             f.write(proc.stdout)  # FEBio doesn't always write a log if it
                                   # hits a error, but the content that would
