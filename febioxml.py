@@ -23,12 +23,12 @@ TAG_FOR_ENTITY_TYPE = {"node": "node_data",
                        "connector": "rigid_connector_data"}
 
 
-def _to_number(s):
+def _to_number(s, dtype=float):
     """Convert numeric string to int or float as appropriate."""
     try:
         return int(s)
     except ValueError:
-        return float(s)
+        return dtype(s)
 
 
 def _maybe_to_number(s):
@@ -111,12 +111,16 @@ def parse_var_selector(text):
                           time_text)
         var_info["time_enum"] = m_time["time_enum"]
         bounds = [v.strip() for v in m_time["range"].split("to")]
+        # Use float32 as the floating point datatype because FEBio uses
+        # 32-bit floats, and we want to retain the associated precision
+        # so that time point lookups can be done intelligently.
         if len(bounds) == 1:
             var_info["type"] = "instantaneous"
-            var_info["time"] = _to_number(bounds[0])
+            var_info["time"] = _to_number(bounds[0], dtype=np.float32)
         elif len(bounds) == 2:
             var_info["type"] = "time series"
-            var_info["time"] = (_to_number(bounds[0]), _to_number(bounds[1]))
+            var_info["time"] = (_to_number(bounds[0], dtype=np.float32),
+                                _to_number(bounds[1], dtype=np.float32))
     else:
         var_info["type"] = "time series"
         var_info["time"] = (-inf, inf)
