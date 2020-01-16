@@ -159,7 +159,7 @@ def get_output_reqs(tree):
                           "connector": {"vars": set(),
                                         "ids": set()}}
     plotfile_selections = set()
-    for e in tree.findall("preprocessor/analysis/var"):
+    for e in tree.findall("preprocessor/analysis/variables/var"):
         var_info = parse_var_selector(e.text)
         if e.attrib["source"] == "logfile":
             logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
@@ -330,7 +330,7 @@ def tabulate_case(analysis_file, case_file):
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {},
               "time series variables": {}}
-    for e in analysis_tree.findall("preprocessor/analysis/var"):
+    for e in analysis_tree.findall("preprocessor/analysis/variables/var"):
         var_info = parse_var_selector(e.text)
         if e.attrib["source"] == "plotfile":
             # Get ID for region selector
