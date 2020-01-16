@@ -1,4 +1,6 @@
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -13,8 +15,10 @@ from matplotlib.colors import DivergingNorm
 from matplotlib.cm import ScalarMappable
 from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
+import multiprocessing as mp
 import numpy as np
 import pandas as pd
+import psutil
 import scipy.cluster
 # Same-package modules
 from . import febioxml as fx
@@ -24,18 +28,20 @@ from .febioxml import read_febio_xml as read_xml
 from .variables import *
 
 
+NUM_WORKERS = psutil.cpu_count(logical=False)
+
 class FEBioError(Exception):
     """Raised when an FEBio simulation terminates in an error."""
     pass
 
 
-def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
+def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
                          analysis_dir=None):
     """Run a sensitivity analysis from spam-infused FEBio XML."""
     # Validate input
-    on_failure_allowed = ("error", "hold", "skip")
-    if not on_failure in on_failure_allowed:
-        raise ValueError(f"on_failure = {on_failure}; allowed values are {','.join(on_failure_allowed)}")
+    on_febio_error_options = ("stop", "hold", "ignore")
+    if not on_febio_error in on_febio_error_options:
+        raise ValueError(f"on_febio_error = {on_febio_error}; allowed values are {','.join(on_febio_error_options)}")
     # Generate the cases
     tree = read_xml(analysis_file)
     analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
@@ -45,25 +51,63 @@ def sensitivity_analysis(analysis_file, nlevels, on_failure="error",
     cases, pth_cases_table = fx.gen_sensitivity_cases(tree, nlevels,
                                                       analysis_dir=analysis_dir)
     # Run the cases
-    continue_to_analysis = True
     run_status = [None for i in range(len(cases))]
-    for i, (rid, case) in enumerate(cases.iterrows()):
-        try:
-            run_case(analysis_dir / case["path"])
-        except FEBioError as err:
-            run_status[i] = "error"
-            if on_failure == "error":
-                raise err
-        run_status[i] = "completed"
+    febio_error = False
+    run_case = partial(run_febio_unchecked, threads=1)
+    # Potential improvement: increase OMP_NUM_THREADS for last few jobs
+    # as more cores are free.  In most cases this should make little
+    # difference, though.
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+        # Submit the first round of cases
+        futures = {pool.submit(run_case,
+                               analysis_dir / cases["path"].loc[case_id]): case_id
+                   for case_id in cases.index[:NUM_WORKERS]}
+        pending_cases = set([case_id for case_id in cases.index[NUM_WORKERS:]])
+        # Submit remaining cases as workers become available.  We do not
+        # submit all cases immediately because we wish to have the
+        # option of ending the analysis early if a case ends in error
+        # termination.
+        while pending_cases:
+            future = next(as_completed(futures))
+            case_id = futures.pop(future)
+            pth_feb = cases["path"].loc[case_id]
+            return_code = future.result()
+            # print(f"Popped case {case_id} from futures")
+            # Log case details
+            if return_code == 0:
+                run_status[case_id] = "completed"
+            else:
+                run_status[case_id] = "error"
+            # Check if we should continue submitting cases
+            if on_febio_error == "stop" and return_code != 0:
+                print(f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_febio_error` = {on_febio_error}, spamneggs will finish any currently running cases, then stop.")
+                break
+            # Submit next case
+            next_case = pending_cases.pop()
+            # print(f"Submitting case {next_case}")
+            futures.update({pool.submit(run_case,
+                                        analysis_dir / cases["path"].loc[next_case]):
+                            next_case})
+        # Finish processing all running cases.
+        for future in as_completed(futures):
+            case_id = futures[future]
+            return_code = future.result()
+            if return_code == 0:
+                run_status[case_id] = "completed"
+            else:
+                run_status[case_id] = "error"
     cases["status"] = run_status
     cases.to_csv(pth_cases_table)
-    # Check if error terminations prevent continuation
+    # Check if error terminations prevent analysis of results
     m_error = cases["status"] == "error"
-    if np.sum(m_error):
-        if on_failure == "skip":
+    if np.any(m_error):
+        if on_febio_error == "ignore":
             cases = cases[np.logical_not(m_error)]
-        elif on_failure == "hold":
-            raise Exception(f"{np.sum(m_error)} cases terminated in an error.  Because `on_failure` = {on_failure}, the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.")
+        elif on_febio_error == "hold":
+            raise Exception(f'{np.sum(m_error)} cases terminated in an error.  Because `on_febio_error` = "{on_febio_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.')
+        elif on_febio_error == "stop":
+            # Error message was printed above
+            exit
     # Tabulate and plot the results
     tabulate_analysis(analysis_file)
     make_sensitivity_figures(analysis_file)
@@ -135,23 +179,38 @@ def tabulate_analysis_tsvars(analysis_file, cases_file):
     return analysis_data
 
 
-def run_case(pth_feb):
-    pth_feb = Path(pth_feb)
-    proc = subprocess.run(['febio', '-i', pth_feb.name],
-                      cwd=Path(pth_feb).parent,  # FEBio always writes xplt to current dir
-                      stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE)
+def run_febio_checked(pth_feb, threads=psutil.cpu_count(logical=False)):
+    """Run FEBio, raising exception on error."""
+    proc = _run_febio(pth_feb, threads=threads)
     if proc.returncode != 0:
-        # FEBio truly does return an error code on "Error Termination";
-        # I checked.
+        raise FEBioError(f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_log}.")
+    return proc.returncode
+
+
+def run_febio_unchecked(pth_feb, threads=psutil.cpu_count(logical=False)):
+    """Run FEBio and return its error code."""
+    return _run_febio(pth_feb, threads=threads).returncode
+
+
+def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
+    """Run FEBio and return the process object."""
+    pth_feb = Path(pth_feb)
+    env = os.environ.copy()
+    env.update({"OMP_NUM_THREADS": f"{threads}"})
+    proc = subprocess.run(['febio', '-i', pth_feb.name],
+                          cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                          env=env)
+    # FEBio doesn't always write a log if it hits a error, but the
+    # content that would have been logged is dumped to stdout.  So we'll
+    # write the stdout output to disk as a workaround.
+    if proc.returncode != 0:
+        # FEBio truly does return an error code on "Error Termination"
         pth_log = pth_feb.with_suffix(".log")
         with open(pth_log, "wb") as f:
-            f.write(proc.stdout)  # FEBio doesn't always write a log if it
-                                  # hits a error, but the content that would
-                                  # have been logged is always dumped to
-                                  # stdout.
-        raise FEBioError(f"FEBio returned an error (return code = {proc.returncode}) while running {pth_feb}; check {pth_log}.")
-    return proc.returncode
+            f.write(proc.stdout)
+    return proc
 
 
 def tabulate_analysis(analysis_file):
