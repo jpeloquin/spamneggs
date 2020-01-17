@@ -456,7 +456,7 @@ def make_sensitivity_figures(analysis_file):
     #
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
-    dist = scipy.spatial.distance.squareform(dist[dn["leaves"]])
+    dist = scipy.spatial.distance.squareform(dist)[dn["leaves"], :][:, dn["leaves"]]
     cmap = mpl.cm.get_cmap("cividis")
     cnorm = mpl.colors.Normalize(vmin=0, vmax=1)
     fig = Figure()
