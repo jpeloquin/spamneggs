@@ -1,6 +1,8 @@
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from functools import partial
+from itertools import product
 import json
 import os
 from pathlib import Path
@@ -23,7 +25,6 @@ import scipy.cluster
 # Same-package modules
 from . import febioxml as fx
 from . import colors
-from .febioxml import tabulate_case
 from .febioxml import read_febio_xml as read_xml
 from .variables import *
 
@@ -38,22 +39,126 @@ class FEBioError(Exception):
     pass
 
 
-def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
-                         analysis_dir=None):
+class Analysis:
+
+    def __init__(self,
+                 model,
+                 parameters: list,
+                 variables: list,
+                 name=None,
+                 directory=None):
+        self.model = model
+        self.parameters = parameters
+        self.variables = variables
+        self.name = name
+        self.directory = Path(directory)
+
+    @classmethod
+    def from_xml(cls, pth):
+        pth = Path(pth)
+        tree = read_xml(pth)
+        e_analysis = tree.find("preprocessor[@proc='spamneggs']/analysis")
+        if e_analysis is None:
+            raise ValueError(f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'.")
+        # Analysis name
+        e_analysis = tree.find("preprocessor/analysis")
+        if "name" in e_analysis.attrib:
+            name = e_analysis.attrib["name"]
+        else:
+            # Use name of file as default name of analysis
+            name = pth.stem
+        # Analysis directory
+        if "path" in e_analysis.attrib:
+            analysis_dir = Path(e_analysis["path"]).absolute
+        else:
+            analysis_dir = pth.parent.absolute() / name
+        # Parameters
+        parameters, parameter_locations = fx.get_parameters(tree)
+        # Variables
+        variables = fx.get_variables(tree)
+        # Model
+        fx.strip_preprocessor_elems(tree, parameters)  # mutates in-place
+        model = FEBioXMLModel(tree, parameter_locations)
+        return cls(model, parameters, variables, name, analysis_dir)
+
+
+class AnalysisCase:
+    def __init__(self,
+                 analysis,
+                 parameters: list,
+                 name=None,
+                 case_dir=None):
+        self.analysis = analysis
+        self._model = None
+        self.parameters = parameters
+        self.name = name
+        self.case_dir = Path(case_dir) if case_dir is not None else None
+
+    @property
+    def model(self):
+        # Not sure if caching the model is a good idea.  It won't update when
+        # the parameters change.  But then again AnalysisCase is supposed to be
+        # used as if immutable.  (Maybe it should be a named tuple?)
+        import ipdb; ipdb.set_trace()
+        if self._model is None:
+            self._model = self.analysis.model(self)
+        return self._model
+
+    @property
+    def variables(self):
+        return self.analysis.variables
+
+
+class FEBioXMLModel:
+    """A model defined by an FEBio XML tree
+
+    FEBioXMLModel is callable.  It accepts a single AnalysisCase
+    instance as an argument and returns a concrete FEBio XML tree, with
+    the contents of all parameter elements replaced by the parameter
+    values specified in the AnalysisCase.
+
+    """
+    def __init__(self, tree, parameters: dict):
+        """Return an FEBioXMLModel instance
+
+        tree := the FEBio XML tree.
+
+        parameters := a dictionary of parameter name → list of
+        ElementPath paths to elements in the XML for which the element's
+        text content is to be replaced by the parameter's value.
+
+        """
+        self.tree = tree
+        self.parameters = parameters
+
+    def __call__(self, case: AnalysisCase):
+        # Create a copy of the tree so we don't alter the original tree.  This
+        # is necessary in case multiple worker threads are generating models
+        # from the same FEBioXMLModel object.
+        tree = deepcopy(self.tree)
+        # Alter the model parameters to match the current case
+        for pname, plocs in self.parameters.items():
+            for ploc in plocs:
+                e_parameter = tree.find(ploc)
+                assert(e_parameter is not None)
+                e_parameter.text = str(case.parameters[pname])
+        # Add the needed elements in <Output> to support the requested
+        # variables.  We also have to update the file name attribute to match
+        # this case.
+        logfile_reqs, plotfile_reqs = fx.required_outputs(case.variables)
+        fx.insert_output_elem(tree, logfile_reqs, plotfile_reqs,
+                              file_stem=case.name)
+        return tree
+
+
+def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
     """Run a sensitivity analysis from spam-infused FEBio XML."""
     # Validate input
     on_febio_error_options = ("stop", "hold", "ignore")
     if not on_febio_error in on_febio_error_options:
         raise ValueError(f"on_febio_error = {on_febio_error}; allowed values are {','.join(on_febio_error_options)}")
-    # Generate the cases
-    tree = read_xml(analysis_file)
-    e_analysis = tree.find("preprocessor[@proc='spamneggs']/analysis")
-    if e_analysis is None:
-        raise ValueError(f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'.")
-    if analysis_dir is None:
-        analysis_dir = Path(analysis_name)
-    cases, pth_cases_table = fx.gen_sensitivity_cases(tree, nlevels,
-                                                      analysis_dir=analysis_dir)
+    # Create the cases
+    cases, pth_cases_table = gen_sensitivity_cases(analysis, nlevels)
     # Run the cases
     run_status = [None for i in range(len(cases))]
     febio_error = False
@@ -64,7 +169,7 @@ def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
         # Submit the first round of cases
         futures = {pool.submit(run_case,
-                               analysis_dir / cases["path"].loc[case_id]): case_id
+                               analysis.directory / cases["path"].loc[case_id]): case_id
                    for case_id in cases.index[:NUM_WORKERS]}
         pending_cases = set([case_id for case_id in cases.index[NUM_WORKERS:]])
         # Submit remaining cases as workers become available.  We do not
@@ -90,7 +195,7 @@ def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
             next_case = pending_cases.pop()
             # print(f"Submitting case {next_case}")
             futures.update({pool.submit(run_case,
-                                        analysis_dir / cases["path"].loc[next_case]):
+                                        analysis.directory / cases["path"].loc[next_case]):
                             next_case})
         # Finish processing all running cases.
         for future in as_completed(futures):
@@ -110,13 +215,65 @@ def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
         if on_febio_error == "ignore":
             cases = cases[np.logical_not(m_error)]
         elif on_febio_error == "hold":
-            raise Exception(f'{np.sum(m_error)} cases terminated in an error.  Because `on_febio_error` = "{on_febio_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `make_sensitivity_figures` separately.')
+            raise Exception(f'{np.sum(m_error)} cases terminated in an error.  Because `on_febio_error` = "{on_febio_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.')
         elif on_febio_error == "stop":
             # Error message was printed above
             exit
     # Tabulate and plot the results
-    tabulate_analysis(analysis_file)
-    make_sensitivity_figures(analysis_file)
+    tabulate(analysis)
+    plot_sensitivity(analysis)
+
+
+def gen_sensitivity_cases(analysis, nlevels):
+    """Return table of cases for sensitivity analysis."""
+    # Check output directory
+    if analysis.directory is None:
+        raise ValueError("Analysis.directory is None.  gen_sensitivity_cases requries an output directory.")
+    if not analysis.directory.exists():
+        analysis.directory.mkdir()
+    # Create output subdirectory for the FEBio files
+    cases_dir = analysis.directory / "cases"
+    if not cases_dir.exists():
+        cases_dir.mkdir()
+    # Generate parameter values for each case
+    colnames = []
+    levels = {}
+    for pname, pdata in analysis.parameters.items():
+        colnames.append(pname)
+        param = pdata["distribution"]
+        # Calculate variable's levels
+        if isinstance(param, ContinuousScalar):
+            levels[pname] = param.sensitivity_levels(nlevels)
+        elif isinstance(param, CategoricalScalar):
+            levels[pname] = param.sensitivity_levels()
+        else:
+            raise ValueError(f"Generating levels from a variable of type `{type(var)}` is not yet supported.")
+    tab_cases = pd.DataFrame({k: v for k, v in zip(colnames,
+                                                   zip(*product(*(levels[k]
+                                                                for k in colnames))))})
+    # Modify the parameters in the XML and write the modified XML to disk
+    feb_paths = []
+    for i, row in tab_cases.iterrows():
+        pvalues = {k: row[k] for k in analysis.parameters}
+        case_name = f"{analysis.name}_-_case={i}"
+        case_dir = cases_dir / case_name
+        case = AnalysisCase(analysis, pvalues, case_name, case_dir)
+        tree = analysis.model(case)
+        # Write the case's FEBio XML tree to disk
+        pth = cases_dir / f"{case.name}.feb"
+        with open(pth, "wb") as f:
+            fx.write_febio_xml(tree, f)
+        feb_paths.append(pth.relative_to(analysis.directory))
+    # TODO: Figure out same way to demarcate parameters from other
+    # metadata so there are no reserved parameter names.  For example, a
+    # user should be able to name their parameter "path" without
+    # conflicts.
+    tab_cases["path"] = feb_paths
+    tab_cases["path"] = tab_cases["path"].astype("object")
+    # ^ in case empty, force correct type
+    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
+    tab_cases.to_csv(pth_cases, index_label="case")
+    return tab_cases, pth_cases
 
 
 def read_case_data(case_file):
@@ -131,9 +288,8 @@ def read_case_data(case_file):
     return record, timeseries
 
 
-def tabulate_case_write(analysis_file, case_file, dir_out=None):
+def tabulate_case_write(analysis, case_file, dir_out=None):
     """Tabulate variables for single case analysis & write to disk."""
-    analysis_file = Path(analysis_file)
     case_file = Path(case_file)
     # Find/create output directory
     if dir_out is None:
@@ -143,9 +299,7 @@ def tabulate_case_write(analysis_file, case_file, dir_out=None):
     if not dir_out.exists():
         dir_out.mkdir()
     # Tabulate the variables
-    record, timeseries = tabulate_case(analysis_file, case_file)
-    analysis_tree = read_xml(analysis_file)
-    analysis_name = fx.get_analysis_name(analysis_tree)
+    record, timeseries = fx.tabulate_case(analysis, case_file)
     with open(dir_out / f"{case_file.stem}_vars.json", "w") as f:
         write_record_to_json(record, f)
     timeseries.to_csv(dir_out / f"{case_file.stem}_timeseries_vars.csv",
@@ -154,7 +308,7 @@ def tabulate_case_write(analysis_file, case_file, dir_out=None):
     return record, timeseries
 
 
-def tabulate_analysis_tsvars(analysis_file, cases_file):
+def tabulate_analysis_tsvars(analysis, cases_file):
     """Tabulate time series variables for all cases in an analysis
 
     The time series tables for the individual cases must have already
@@ -164,22 +318,19 @@ def tabulate_analysis_tsvars(analysis_file, cases_file):
     # TODO: It would be beneficial to build up the whole-analysis time
     # series table at the same time as case time series tables are
     # written to disk, instead of re-reading everything from disk.
-    tree = read_xml(analysis_file)
-    analysis_name = fx.get_analysis_name(tree)
-    parameters, parameter_locs = fx.get_parameters(tree)
     pth_cases = Path(cases_file)
     cases = pd.read_csv(cases_file, index_col=0)
     analysis_data = pd.DataFrame()
     for i in cases.index:
         pth_tsvars = pth_cases.parent / "case_output" /\
-            f"{analysis_name}_-_case={i}_timeseries_vars.csv"
+            f"{analysis.name}_-_case={i}_timeseries_vars.csv"
         case_data = pd.read_csv(pth_tsvars)
         varnames = set(case_data.columns) - set(["Time", "Step"])
         case_data = case_data.rename({k: f"{k} [var]" for k in varnames},
                                      axis=1)
         case_data["Case"] = i
-        pcolnames = [f"{p} [param]" for p in parameters]
-        for pname, pcolname in zip(parameters, pcolnames):
+        for pname in analysis.parameters:
+            pcolname = f"{pname} [param]"
             case_data[pcolname] = cases[pname].loc[i]
         analysis_data = pd.concat([analysis_data, case_data])
     return analysis_data
@@ -219,39 +370,31 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
     return proc
 
 
-def tabulate_analysis(analysis_file):
+def tabulate(analysis: Analysis):
     """Tabulate output from an analysis."""
-    tree = read_xml(analysis_file)  # re-read b/c gen_sensitivity_cases modifies tree
-    parameters, parameter_locs = fx.get_parameters(tree)
     ivars_table = defaultdict(list)
-    analysis_name = fx.get_analysis_name(tree)
-    analysis_dir = Path(analysis_name)
-    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
+    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     if len(cases) == 0:
         raise ValueError(f"No cases to tabulate in '{pth_cases}'")
     for i in cases.index:
-        record, timeseries = tabulate_case_write(analysis_file,
-                                                 analysis_dir / cases["path"].loc[i],
-                                                 dir_out=analysis_dir / "case_output")
+        record, timeseries = tabulate_case_write(analysis,
+                                                 analysis.directory / cases["path"].loc[i],
+                                                 dir_out=analysis.directory / "case_output")
         ivars_table["case"].append(i)
-        for p in parameters:
+        for p in analysis.parameters:
             k = f"{p} [param]"
             ivars_table[k].append(cases[p].loc[i])
         for v in record["instantaneous variables"]:
             k = f"{v} [var]"
             ivars_table[k].append(record["instantaneous variables"][v]["value"])
     ivars_table = pd.DataFrame(ivars_table).set_index("case")
-    ivars_table.to_csv(analysis_dir / f"{analysis_name}_-_inst_vars.csv",
+    ivars_table.to_csv(analysis.directory / f"{analysis.name}_-_inst_vars.csv",
                        index=True)
 
 
-def make_sensitivity_figures(analysis_file):
-    tree = read_xml(analysis_file)
-    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
-                              "analysis").attrib["name"]
-    analysis_dir = Path(analysis_file).parent / analysis_name
-    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
+def plot_sensitivity(analysis):
+    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "completed"]
 
@@ -265,7 +408,7 @@ def make_sensitivity_figures(analysis_file):
     param_values = {k: cases[k] for k in param_names}
 
     # Get variable names
-    record, tab_timeseries = read_case_data(analysis_dir /
+    record, tab_timeseries = read_case_data(analysis.directory /
                                             cases["path"].iloc[0])
     ivar_names = [nm for nm in record["instantaneous variables"]]
     tsvar_names = [nm for nm in record["time series variables"]]
@@ -278,25 +421,23 @@ def make_sensitivity_figures(analysis_file):
         # re-use it here instead of re-reading the analysis XML for
         # every case.  However, to do this the case generation must not
         # alter the analysis XML tree.
-        record, tab_timeseries = read_case_data(analysis_dir /
+        record, tab_timeseries = read_case_data(analysis.directory /
                                                 cases["path"].loc[i])
         for nm in ivar_names:
             ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
     if len(ivar_names) > 0:
-        make_sensitivity_ivar_figures(param_names, param_values,
-                                      ivar_names, ivar_values,
-                                      analysis_name, analysis_dir)
+        make_sensitivity_ivar_figures(analysis, param_names, param_values,
+                                      ivar_names, ivar_values)
 
     # Plots for time series variables
     if len(tsvar_names) > 0:
-        tsdata = tabulate_analysis_tsvars(analysis_file, pth_cases)
-        make_sensitivity_tsvar_figures(param_names, param_values,
-                                       tsvar_names, tsdata, cases,
-                                       analysis_name, analysis_dir)
+        tsdata = tabulate_analysis_tsvars(analysis, pth_cases)
+        make_sensitivity_tsvar_figures(analysis, param_names, param_values,
+                                       tsvar_names, tsdata, cases)
 
 
-def make_sensitivity_ivar_figures(param_names, param_values, ivar_names,
-                                  ivar_values, analysis_name, analysis_dir):
+def make_sensitivity_ivar_figures(analysis, param_names, param_values,
+                                  ivar_names, ivar_values):
     # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
     npanels_h = len(ivar_names) + 1
@@ -337,8 +478,8 @@ def make_sensitivity_ivar_figures(param_names, param_values, ivar_names,
         axarr[-1, j].set_xlabel(param)
     # Save figure
     fig.tight_layout()
-    fig.savefig(analysis_dir /
-                f"{analysis_name}_-_inst_var_scatterplots.svg")
+    fig.savefig(analysis.directory /
+                f"{analysis.name}_-_inst_var_scatterplots.svg")
     plt.close(fig)
 
     # Standalone instantaneous variable vs. parameter scatter plots
@@ -351,8 +492,8 @@ def make_sensitivity_ivar_figures(param_names, param_values, ivar_names,
             ax.set_ylabel(var)
             ax.set_xlabel(param)
             fig.tight_layout()
-            fig.savefig(analysis_dir /
-                        f"{analysis_name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
+            fig.savefig(analysis.directory /
+                        f"{analysis.name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
 
     # Instantaneous variables: Standalone variable & parameter histograms
     for data in (param_values, ivar_values):
@@ -364,13 +505,12 @@ def make_sensitivity_ivar_figures(param_names, param_values, ivar_names,
             ax.set_xlabel(nm)
             ax.set_ylabel("Count")
             fig.tight_layout()
-            fig.savefig(analysis_dir /
-                        f"{analysis_name}_-_distribution_-_{nm}.svg")
+            fig.savefig(analysis.directory /
+                        f"{analysis.name}_-_distribution_-_{nm}.svg")
 
 
-def make_sensitivity_tsvar_figures(param_names, param_values,
-                                   tsvar_names, tsdata, cases,
-                                   analysis_name, analysis_dir):
+def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
+                                   tsvar_names, tsdata, cases):
     # Time series variables: line plots with parameters coded by weight & color
     #
     # TODO: Find the reference case; the one with all parameters equal
@@ -404,28 +544,28 @@ def make_sensitivity_tsvar_figures(param_names, param_values,
             # TODO: Plot parameter sensitivity for multiple variation
             # Plot parameter sensitivity for independent variation
             for case_id in cases.index[m_ind]:
-                record, tab_timeseries = read_case_data(analysis_dir /
+                record, tab_timeseries = read_case_data(analysis.directory /
                                                         cases["path"].loc[case_id])
                 ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
                         color=CMAP_DIVERGE(cnorm(pvalues.loc[case_id])))
             # Plot central case
             case_id = cases.index[m_cen][0]
-            record, tab_timeseries = read_case_data(analysis_dir /
+            record, tab_timeseries = read_case_data(analysis.directory /
                                                     cases["path"].loc[case_id])
             ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
                     color=CMAP_DIVERGE(cnorm(cen[pname])))
             cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE))
             cbar.set_label(pname)
             fig.tight_layout()
-            fig.savefig(analysis_dir /
-                       "_-_".join((analysis_name,
+            fig.savefig(analysis.directory /
+                       "_-_".join((analysis.name,
                                    "timeseries_var_lineplot",
                                    f"{varname}_vs_{pname}.svg")))
 
-    plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir, norm="none")
-    plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir, norm="all")
-    plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir, norm="vector")
-    plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir, norm="subvector")
+    plot_tsvars_heat_map(analysis, tsdata, norm="none")
+    plot_tsvars_heat_map(analysis, tsdata, norm="all")
+    plot_tsvars_heat_map(analysis, tsdata, norm="vector")
+    plot_tsvars_heat_map(analysis, tsdata, norm="subvector")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -505,8 +645,8 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
 
 
-def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
-                         norm="none", corr_threshold=1e-6):
+def plot_tsvars_heat_map(analysis, tsdata, norm="none",
+                         corr_threshold=1e-6):
     """Plot times series variable ∝ parameter heat maps.
 
     norm := "none", "all", "vector", or "individual".  Type of color
@@ -723,7 +863,7 @@ def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
     # Add whole-plot labels
     fig.suptitle(f"Time series variable correlations, norm = {norm}", fontsize=fontsize_figlabel)
     # Write figure to disk
-    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_heatmap_norm={norm}.svg")
+    fig.savefig(analysis.directory / f"{analysis.name}_-_sensitivity_vector_heatmap_norm={norm}.svg")
     #
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
@@ -748,4 +888,4 @@ def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
     ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     fig.tight_layout()
-    fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_distance_matrix.svg")
+    fig.savefig(analysis.directory / f"{analysis.name}_-_sensitivity_vector_distance_matrix.svg")

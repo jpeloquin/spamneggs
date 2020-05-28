@@ -9,9 +9,9 @@ import pandas as pd
 from lxml import etree
 # In-house packages
 from febtools.input import read_febio_xml, textdata_table
-from febtools.xplt import XpltData
 from febtools.output import write_xml as write_febio_xml
 from febtools.select import find_closest_timestep
+from febtools.xplt import XpltData
 # Same-package modules
 from .variables import *
 
@@ -143,7 +143,7 @@ def scalar_from_xml(element, nominal=None, **kwargs):
         raise ValueError(f"Distribution type '{dist.attrib['type']}' not yet supported.")
 
 
-def get_output_reqs(tree):
+def required_outputs(variables):
     """Return the FEBio XML output vars required for <analysis>
 
     `get_output_reqs` is separate from `insert_output_elem`, which
@@ -163,24 +163,20 @@ def get_output_reqs(tree):
                           "connector": {"vars": set(),
                                         "ids": set()}}
     plotfile_selections = set()
-    for e in tree.findall("preprocessor/analysis/variables/var"):
-        var_info = parse_var_selector(e.text)
-        if e.attrib["source"] == "logfile":
-            logfile_selections[var_info["entity"]]["vars"].add(var_info["variable"])
-            logfile_selections[var_info["entity"]]["ids"].add(var_info["entity ID"])
-        elif e.attrib["source"] == "plotfile":
-            plotfile_selections.add(var_info["variable"])
+    for var in variables:
+        if var["source"] == "logfile":
+            logfile_selections[var["entity"]]["vars"].add(var["variable"])
+            logfile_selections[var["entity"]]["ids"].add(var["entity ID"])
+        elif var["source"] == "plotfile":
+            plotfile_selections.add(var["variable"])
     return logfile_selections, plotfile_selections
 
 
 def insert_output_elem(tree, logfile_selections, plotfile_selections,
-                       file_stem=None):
+                       file_stem):
     """Create <Output> element in tree for variables in <analysis>.
 
     """
-    if file_stem is None:
-        file_stem = get_analysis_name(tree)
-
     # Find or create the <Output> element
     e_output = tree.find("Output")
     if e_output is None:
@@ -218,6 +214,10 @@ def strip_preprocessor_elems(tree, parameters):
     The input tree is mutated in-place.
 
     """
+    # TODO: Separate the task of removing the preprocessor elements &
+    # the task of replacing the parameter element targets with concrete
+    # values, nominal or otherwise.
+    #
     # Remove the <preprocessor> element b/c FEBio can't handle extra elements
     tree.getroot().remove(tree.find("preprocessor"))
     # Remove the <scalar> elements from the tree.
@@ -228,15 +228,6 @@ def strip_preprocessor_elems(tree, parameters):
             raise ValueError(f"Element `{tree.getelementpath(parent)}` in file `{tree.base}` has no nominal value defined.")
         parent.remove(e)
         parent.text = nominal_value
-
-
-def get_analysis_name(tree):
-    e_analysis = tree.find("preprocessor/analysis")
-    if "name" in e_analysis.attrib:
-        name = e_analysis.attrib["name"]
-    else:
-        name = Path(pth).stem
-    return name
 
 
 def get_parameters(tree):
@@ -287,36 +278,20 @@ def get_parameters(tree):
     return parameters, parameter_locations
 
 
-def gen_single_analysis(pth, dir_out="."):
-    """Generate FEBio XML for single case analysis."""
-    # Read the relevant analysis parameters and variables
-    tree = read_febio_xml(pth)
-    analysis_name = get_analysis_name(tree)
-    # Generate a clean FEBio XML file that FEBio can run.  Insert
-    # appropritae plotfile and text data files for the user's requested
-    # variables, and strip all preprocessor-related tags.
-    insert_output_elem(tree, *get_output_reqs(tree),
-                       file_stem=analysis_name)
-    strip_preprocessor_elems(tree)
-    # Write the clean FEBio XML file for FEBio to use
-    dir_out = Path(dir_out) / analysis_name
-    if not dir_out.exists():
-        dir_out.mkdir(parents=True)
-    if not dir_out.is_dir():
-        raise ValueError(f"`{dir_out.resolve()}`, given as `{dir_out}`, is not a directory.")
-    pth_out = Path(dir_out) / f"{analysis_name}.feb"
-    with open(pth_out, "wb") as f:
-        write_febio_xml(tree, f)
-    return pth_out
+def get_variables(tree):
+    variables = []
+    for e in tree.findall("preprocessor/analysis/variables/var"):
+        var = parse_var_selector(e.text)
+        var["name"] = e.attrib["name"]
+        var["source"] = e.attrib["source"]
+        variables.append(var)
+    return variables
 
 
-def tabulate_case(analysis_file, case_file):
+def tabulate_case(analysis, case_file):
     """Tabulate variables for single case analysis."""
-    analysis_file = Path(analysis_file)
     case_file = Path(case_file)
-    analysis_tree = read_febio_xml(analysis_file)
     case_tree = read_febio_xml(case_file)
-    analysis_name = get_analysis_name(analysis_tree)
     # Read the plotfile
     pth_xplt = case_file.with_suffix(".xplt")
     with open(pth_xplt, "rb") as f:
@@ -334,75 +309,76 @@ def tabulate_case(analysis_file, case_file):
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {},
               "time series variables": {}}
-    for e in analysis_tree.findall("preprocessor/analysis/variables/var"):
-        var_info = parse_var_selector(e.text)
-        if e.attrib["source"] == "plotfile":
+    for var in analysis.variables:
+        if var["source"] == "plotfile":
             # Get ID for region selector
-            if var_info["region"] is None:
+            if var["region"] is None:
                 region_id = None
             else:
-                region_id = var_info["region"]["ID"]
+                region_id = var["region"]["ID"]
             # Get ID for parent selector
-            if var_info["parent"] is None:
+            if var["parent"] is None:
                 parent_id = None
             else:
-                parent_id = var_info["parent"]["ID"]
-            if var_info["type"] == "instantaneous":
+                parent_id = var["parent"]["ID"]
+            if var["type"] == "instantaneous":
                 # Convert time selector to step selector
-                if var_info["time_enum"] == "time":
-                    step = find_closest_timestep(var_info["time"],
+                if var["time_enum"] == "time":
+                    step = find_closest_timestep(var["time"],
                                                  xplt_data.step_times,
                                                  np.array(range(len(xplt_data.step_times))))
-                value = xplt_data.value(var_info["variable"], step,
-                                        var_info["entity ID"],
+                value = xplt_data.value(var["variable"], step,
+                                        var["entity ID"],
                                         region_id, parent_id)
                 # Apply component selector
-                for c in var_info["component"]:
+                for c in var["component"]:
                     value = value[c]
                 # Save selected value
-                record["instantaneous variables"][e.attrib["name"]] =\
+                record["instantaneous variables"][var["name"]] =\
                     {"value": value}
-            elif var_info["type"] == "time series":
-                data = xplt_data.values(var_info["variable"],
-                                        entity_id=var_info["entity ID"],
+            elif var["type"] == "time series":
+                data = xplt_data.values(var["variable"],
+                                        entity_id=var["entity ID"],
                                         region_id=region_id,
                                         parent_id=parent_id)
-                values = np.moveaxis(np.array(data[var_info["variable"]]), 0, -1)
-                for c in var_info["component"]:
+                values = np.moveaxis(np.array(data[var["variable"]]), 0, -1)
+                for c in var["component"]:
                     values = values[c]
-                record["time series variables"][e.attrib["name"]] =\
+                record["time series variables"][var["name"]] =\
                     {"times": xplt_data.step_times,
                      "steps": np.array(range(len(xplt_data.step_times))),
                      "values": values}
-        elif e.attrib["source"] == "logfile":
+        elif var["source"] == "logfile":
             # Apply entity type selector
-            tab = text_data[var_info["entity"]]
+            tab = text_data[var["entity"]]
             # Apply entity ID selector
-            tab = tab[tab["Item"] == var_info["entity ID"]]
+            tab = tab[tab["Item"] == var["entity ID"]]
             tab = tab.set_index("Step")
-            if var_info["type"] == "instantaneous":
+            if var["type"] == "instantaneous":
                 # Convert time selector to step selector
-                if var_info["time_enum"] == "time":
-                    step = find_closest_timestep(var_info["time"],
+                if var["time_enum"] == "time":
+                    step = find_closest_timestep(var["time"],
                                                  tab["Time"], tab.index)
                     if step == 0:
                         raise ValueError("Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0.")
                     if step not in tab.index:
-                        raise ValueError(f"A value for {var_info['variable']} was requested for step = {step}, but this step is not present in the FEBio text data output.")
-                elif var_info["time_enum"] == "step":
-                    step = var_info["time"]
+                        raise ValueError(f"A value for {var['variable']} was requested for step = {step}, but this step is not present in the FEBio text data output.")
+                elif var["time_enum"] == "step":
+                    step = var["time"]
                 else:
-                    msg = f"Time selectors of type {var_info['time_enum']} "\
+                    msg = f"Time selectors of type {var['time_enum']} "\
                         "are not supported.  Use 'step' or 'time'."
                     raise ValueError(msg)
                 # Apply variable name and time selector
-                value = tab[var_info["variable"]].loc[step]
+                value = tab[var["variable"]].loc[step]
                 record["instantaneous variables"][e.attrib["name"]] = {"value": value}
-            elif var_info["type"] == "time series":
+            elif var["type"] == "time series":
                 record["time series variables"][e.attrib["name"]] =\
                     {"times": tab["Time"].values,
                      "steps": tab.index.values,
-                     "values": tab[var_info["variable"]].values}
+                     "values": tab[var["variable"]].values}
+        else:
+            raise ValueError(f"'{var['source']}' not supported as a variable source.")
     # Assemble the time series table
     tab_timeseries = {"Time": [],
                       "Step": []}
@@ -412,79 +388,3 @@ def tabulate_case(analysis_file, case_file):
         tab_timeseries[var] = d["values"]
     tab_timeseries = pd.DataFrame(tab_timeseries)
     return record, tab_timeseries
-
-
-def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
-    """Return table of cases for sensitivity analysis."""
-    analysis_name = get_analysis_name(tree)
-    # Figure out which directory contains all the files for the analysis
-    if analysis_dir is None:
-        analysis_dir = Path(analysis_name)
-    if not analysis_dir.exists():
-        analysis_dir.mkdir()
-    # Create a subdirectory for the FEBio files
-    cases_dir = analysis_dir / "cases"
-    if not cases_dir.exists():
-        cases_dir.mkdir()
-    # Generate the cases
-    analysis = {"name": analysis_name,
-                "directory": analysis_dir,
-                "FEBio output": get_output_reqs(tree)}
-    cases = []
-    # Find all the variable parameters (at the moment, just <scalar>
-    # elements) in the tree, and remember position of each in the tree by
-    # storing the path to its parent element.
-    e_scalars = tree.findall(".//scalar")
-    parameters, parameter_locations = get_parameters(tree)
-    # Remove all the preprocessor elements; FEBio can't handle them.
-    # This also replaces each variable with its nominal value, but they
-    # will be changed later.
-    strip_preprocessor_elems(tree, parameters)
-    # Generate list of cases based on combinations of levels for each
-    # variable parameter
-    colnames = []
-    levels = {}
-    for pname, mdata in parameters.items():
-        colnames.append(pname)
-        param = mdata["distribution"]
-        # Calculate variable's levels
-        if isinstance(param, ContinuousScalar):
-            levels[pname] = param.sensitivity_levels(nlevels)
-        elif isinstance(param, CategoricalScalar):
-            levels[pname] = param.sensitivity_levels()
-        else:
-            raise ValueError(f"Generating levels from a variable of type `{type(var)}` is not yet supported.")
-    cases = pd.DataFrame({k: v for k, v in zip(colnames,
-                                               zip(*product(*(levels[k]
-                                                              for k in colnames))))})
-    # Modify the parameters in the XML and write the modified XML to disk
-    feb_paths = []
-    for i, case in cases.iterrows():
-        for pname in colnames:
-            # Alter the model parameters to match the current case
-            for usage_path in parameter_locations[pname]:
-                e_parameter = tree.find(usage_path)
-            assert(e_parameter is not None)
-            e_parameter.text = str(case[pname])
-        # Add the needed elements in <Output> to support the requested
-        # variables.  We have to do this for each case because the
-        # output file names are case-dependent.
-        file_stem = f"{analysis['name']}_-_case={i}"
-        insert_output_elem(tree, *analysis["FEBio output"],
-                           file_stem=file_stem)
-        # Write the modified XML to disk
-        pth = cases_dir / f"{file_stem}.feb"
-        with open(pth, "wb") as f:
-            write_febio_xml(tree, f)
-        feb_paths.append(pth.relative_to(analysis_dir))
-    # TODO: Figure out same way to demarcate parameters from other
-    # metadata so there are no reserved parameter names.  For example, a
-    # user should be able to name their parameter "path" without
-    # conflicts.
-    cases["path"] = feb_paths
-    cases["path"] = cases["path"].astype("object")
-    # ^ in case empty, force correct type
-    cases = pd.DataFrame(cases)
-    pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
-    cases.to_csv(pth_cases, index_label="case")
-    return cases, pth_cases
