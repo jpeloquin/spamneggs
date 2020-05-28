@@ -251,18 +251,24 @@ def make_sensitivity_figures(analysis_file):
     pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "completed"]
+
+    # Read parameters
+    #
     # TODO: Add a function to get the list of parameters and variables
     # for an analysis up-front.  Extract the relevant code from
     # tabulate_case.
     param_names = [k for k in cases.columns
                    if k not in ["case", "path", "status"]]
     param_values = {k: cases[k] for k in param_names}
-    # Make scatter plot matrix for instantaneous variables
-    ivar_values = defaultdict(list)
+
+    # Get variable names
     record, tab_timeseries = read_case_data(analysis_dir /
                                             cases["path"].iloc[0])
     ivar_names = [nm for nm in record["instantaneous variables"]]
-    tvar_names = [nm for nm in record["time series variables"]]
+    tsvar_names = [nm for nm in record["time series variables"]]
+
+    # Plots for instantantaneous variables
+    ivar_values = defaultdict(list)
     for i in cases.index:
         # TODO: There is an opportunity for improvement here: We could
         # preserve the tree from the first read of the analysis XML and
@@ -273,11 +279,22 @@ def make_sensitivity_figures(analysis_file):
                                                 cases["path"].loc[i])
         for nm in ivar_names:
             ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
+    if len(ivar_names) > 0:
+        make_sensitivity_ivar_figures(param_names, param_values,
+                                      ivar_names, ivar_values,
+                                      analysis_name, analysis_dir)
 
-    # Instantaneous variables: Scatter plots of variable vs. parameter
-    #
-    # Instantaneous variables: Matrix of variable vs. parameter scatter
-    # plots
+    # Plots for time series variables
+    if len(tsvar_names) > 0:
+        tsdata = tabulate_analysis_tsvars(analysis_file, pth_cases)
+        make_sensitivity_tsvar_figures(param_names, param_values,
+                                       tsvar_names, tsdata, cases,
+                                       analysis_name, analysis_dir)
+
+
+def make_sensitivity_ivar_figures(param_names, param_values, ivar_names,
+                                  ivar_values, analysis_name, analysis_dir):
+    # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
     npanels_h = len(ivar_names) + 1
     hist_nbins = 9
@@ -320,8 +337,8 @@ def make_sensitivity_figures(analysis_file):
     fig.savefig(analysis_dir /
                 f"{analysis_name}_-_inst_var_scatterplots.svg")
     plt.close(fig)
-    #
-    # Instantaneous variables: Standalone variable vs. parameter scatter plots
+
+    # Standalone instantaneous variable vs. parameter scatter plots
     for param in param_names:
         for var in ivar_names:
             fig = Figure()
@@ -333,7 +350,7 @@ def make_sensitivity_figures(analysis_file):
             fig.tight_layout()
             fig.savefig(analysis_dir /
                         f"{analysis_name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
-    #
+
     # Instantaneous variables: Standalone variable & parameter histograms
     for data in (param_values, ivar_values):
         for nm in data:
@@ -346,7 +363,11 @@ def make_sensitivity_figures(analysis_file):
             fig.tight_layout()
             fig.savefig(analysis_dir /
                         f"{analysis_name}_-_distribution_-_{nm}.svg")
-    #
+
+
+def make_sensitivity_tsvar_figures(param_names, param_values,
+                                   tsvar_names, tsdata, cases,
+                                   analysis_name, analysis_dir):
     # Time series variables: line plots with parameters coded by weight & color
     #
     # TODO: Find the reference case; the one with all parameters equal
@@ -371,7 +392,7 @@ def make_sensitivity_figures(analysis_file):
         m_ind = np.ones(len(cases), dtype="bool")
         for p_oth in set(param_values.keys()) - set([pname]):
             m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
-        for varname in tvar_names:
+        for varname in tsvar_names:
             fig = Figure()
             fig.set_size_inches((5,4))
             FigureCanvas(fig)
@@ -399,11 +420,14 @@ def make_sensitivity_figures(analysis_file):
                        "_-_".join((analysis_name,
                                    "timeseries_var_lineplot",
                                    f"{varname}_vs_{pname}.svg")))
-    #
-    # Time series variables: correlation of instantaneous values ~ parameters.
-    data = tabulate_analysis_tsvars(analysis_file, pth_cases)
-    params = [c for c in data.columns if c.endswith(" [param]")]
-    varnames = [c for c in data.columns if c.endswith(" [var]")]
+
+    # Heat map showing correlation of each time series variable's values
+    # with each parameter
+    params = [c for c in tsdata.columns if c.endswith(" [param]")]
+    varnames = [c for c in tsdata.columns if c.endswith(" [var]")]
+    # ^ These names are tagged with their type to avoid name collisions.
+    # The plain names passed as arguments cannot be used.
+    data = tsdata.copy()  # need to mutate the table
     data = data.drop("Time", axis=1).set_index(["Step", "Case"])
     n = len(data.index.levels[0])
     sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
