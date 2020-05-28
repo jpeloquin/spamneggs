@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib import ticker
-from matplotlib.colors import DivergingNorm
+from matplotlib.colors import TwoSlopeNorm
 from matplotlib.cm import ScalarMappable
 from mpl_toolkits.axes_grid1 import host_subplot
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
@@ -387,8 +387,8 @@ def make_sensitivity_tsvar_figures(param_names, param_values,
     for pname, pvalues in param_values.items():
         cmap = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
                                                   colors.diverging_bky_60_10_c30_n256)
-        cnorm = DivergingNorm(vmin=min(pvalues), vcenter=cen[pname],
-                              vmax=max(pvalues))
+        cnorm = TwoSlopeNorm(vmin=min(pvalues), vcenter=cen[pname],
+                             vmax=max(pvalues))
         m_ind = np.ones(len(cases), dtype="bool")
         for p_oth in set(param_values.keys()) - set([pname]):
             m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
