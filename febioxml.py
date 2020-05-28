@@ -11,7 +11,7 @@ from lxml import etree
 from febtools.input import read_febio_xml, textdata_table
 from febtools.xplt import XpltData
 from febtools.output import write_xml as write_febio_xml
-from febtools.util import find_closest_timestep
+from febtools.select import find_closest_timestep
 # Same-package modules
 from .variables import *
 
