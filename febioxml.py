@@ -482,6 +482,8 @@ def gen_sensitivity_cases(tree, nlevels, analysis_dir=None):
     # user should be able to name their parameter "path" without
     # conflicts.
     cases["path"] = feb_paths
+    cases["path"] = cases["path"].astype("object")
+    # ^ in case empty, force correct type
     cases = pd.DataFrame(cases)
     pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases.to_csv(pth_cases, index_label="case")

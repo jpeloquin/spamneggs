@@ -98,6 +98,8 @@ def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
             else:
                 run_status[case_id] = "error"
     cases["status"] = run_status
+    cases["status"] = cases["status"].astype("object")
+    # ^ in case empty, force correct type
     cases.to_csv(pth_cases_table)
     # Check if error terminations prevent analysis of results
     m_error = cases["status"] == "error"
