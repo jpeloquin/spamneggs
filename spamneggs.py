@@ -44,8 +44,9 @@ def sensitivity_analysis(analysis_file, nlevels, on_febio_error="stop",
         raise ValueError(f"on_febio_error = {on_febio_error}; allowed values are {','.join(on_febio_error_options)}")
     # Generate the cases
     tree = read_xml(analysis_file)
-    analysis_name = tree.find("preprocessor[@proc='spamneggs']/"
-                              "analysis").attrib["name"]
+    e_analysis = tree.find("preprocessor[@proc='spamneggs']/analysis")
+    if e_analysis is None:
+        raise ValueError(f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'.")
     if analysis_dir is None:
         analysis_dir = Path(analysis_name)
     cases, pth_cases_table = fx.gen_sensitivity_cases(tree, nlevels,
