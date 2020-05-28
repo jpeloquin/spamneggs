@@ -225,6 +225,8 @@ def tabulate_analysis(analysis_file):
     analysis_dir = Path(analysis_name)
     pth_cases = analysis_dir / f"{analysis_name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
+    if len(cases) == 0:
+        raise ValueError(f"No cases to tabulate in '{pth_cases}'")
     for i in cases.index:
         record, timeseries = tabulate_case_write(analysis_file,
                                                  analysis_dir / cases["path"].loc[i],
