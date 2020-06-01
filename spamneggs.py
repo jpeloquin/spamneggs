@@ -147,7 +147,7 @@ def tabulate_case_write(analysis_file, case_file, dir_out=None):
         write_record_to_json(record, f)
     timeseries.to_csv(dir_out / f"{case_file.stem}_timeseries_vars.csv",
                       index=False)
-    plot_timeseries_vars(timeseries, dir_out=dir_out, casename=case_file.stem)
+    plot_case_tsvars(timeseries, dir_out=dir_out, casename=case_file.stem)
     return record, timeseries
 
 
@@ -421,6 +421,88 @@ def make_sensitivity_tsvar_figures(param_names, param_values,
                                    "timeseries_var_lineplot",
                                    f"{varname}_vs_{pname}.svg")))
 
+    plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir)
+
+
+class NDArrayJSONEncoder(json.JSONEncoder):
+
+    def default(self, o):
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        elif isinstance(o, np.floating):
+            return float(o)
+        else:
+            return super().default(o)
+
+
+def write_record_to_json(record, f):
+    json.dump(record, f, indent=2, ensure_ascii=False,
+              cls=NDArrayJSONEncoder)
+
+
+def plot_case_tsvar(timeseries, varname, casename=None):
+    """Return a line plot of a case's time series variable."""
+    step = timeseries["Step"]
+    time = timeseries["Time"]
+    values = timeseries[varname]
+    # Plot the lone variable in the table on a single axes
+    fig = Figure()
+    FigureCanvas(fig)
+    ax = fig.add_subplot(111)
+    ax.plot(time, values, marker=".")
+    ax.set_xlabel("Time")
+    ax.set_ylabel(varname)
+    if casename is not None:
+        ax.set_title(f"{casename} {varname}")
+    else:
+        ax.set_title(varname)
+    return fig
+
+
+def plot_case_tsvars(timeseries, dir_out, casename=None):
+    """Plot a case's time series variables and write the plots to disk.
+
+    This function is meant for automated sensitivity analysis.  Plots
+    will be written to disk using the standard spamneggs naming
+    conventions.
+
+    TODO: Provide a companion function that just returns the plot
+    handle, allowing customization.
+
+    """
+    dir_out = Path(dir_out)
+    if casename is None:
+        stem = ""
+    else:
+        stem = casename + "_"
+    if not isinstance(timeseries, pd.DataFrame):
+        timeseries = pd.DataFrame(timeseries)
+    if len(timeseries) == 0:
+        raise ValueError("No values in time series data.")
+    timeseries = timeseries.set_index("Step")
+    nm_xaxis = "Time"
+    nms_yaxis = [nm for nm in timeseries.columns if nm != nm_xaxis]
+    # Produce one large plot with all variables
+    axarr = timeseries.plot(marker=".", subplots=True, x=nm_xaxis,
+                            legend=False)
+    for nm, ax in zip(nms_yaxis, axarr):
+        ax.set_ylabel(nm)
+    fig = axarr[0].figure
+    if casename is not None:
+        axarr[0].set_title(casename)
+    axarr[-1].set_xlabel(nm_xaxis)
+    fig.tight_layout()
+    fig.savefig(dir_out / f"{stem}timeseries_vars.svg")
+    plt.close(fig)
+    # Produce one small plot for each variable
+    timeseries = timeseries.reset_index()
+    for nm in nms_yaxis:
+        fig = plot_case_tsvar(timeseries, nm, casename)
+        fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
+
+
+def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir):
+    """Return times series sensitivity vector heat map for each parameter"""
     # Heat map showing correlation of each time series variable's values
     # with each parameter
     params = [c for c in tsdata.columns if c.endswith(" [param]")]
@@ -506,80 +588,3 @@ def make_sensitivity_tsvar_figures(param_names, param_values,
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     fig.tight_layout()
     fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_distance_matrix.svg")
-
-
-class NDArrayJSONEncoder(json.JSONEncoder):
-
-    def default(self, o):
-        if isinstance(o, np.ndarray):
-            return o.tolist()
-        elif isinstance(o, np.floating):
-            return float(o)
-        else:
-            return super().default(o)
-
-
-def write_record_to_json(record, f):
-    json.dump(record, f, indent=2, ensure_ascii=False,
-              cls=NDArrayJSONEncoder)
-
-
-def plot_timeseries_var(timeseries, varname, casename=None):
-    """Return line plot of time series variable."""
-    step = timeseries["Step"]
-    time = timeseries["Time"]
-    values = timeseries[varname]
-    # Plot the lone variable in the table on a single axes
-    fig = Figure()
-    FigureCanvas(fig)
-    ax = fig.add_subplot(111)
-    ax.plot(time, values, marker=".")
-    ax.set_xlabel("Time")
-    ax.set_ylabel(varname)
-    if casename is not None:
-        ax.set_title(f"{casename} {varname}")
-    else:
-        ax.set_title(varname)
-    return fig
-
-
-def plot_timeseries_vars(timeseries, dir_out, casename=None):
-    """Plot time series variables and write the plots to disk.
-
-    This function is meant for automated sensitivity analysis.  Plots
-    will be written to disk using the standard spamneggs naming
-    conventions.
-
-    TODO: Provide a companion function that just returns the plot
-    handle, allowing customization.
-
-    """
-    dir_out = Path(dir_out)
-    if casename is None:
-        stem = ""
-    else:
-        stem = casename + "_"
-    if not isinstance(timeseries, pd.DataFrame):
-        timeseries = pd.DataFrame(timeseries)
-    if len(timeseries) == 0:
-        raise ValueError("No values in time series data.")
-    timeseries = timeseries.set_index("Step")
-    nm_xaxis = "Time"
-    nms_yaxis = [nm for nm in timeseries.columns if nm != nm_xaxis]
-    # Produce one large plot with all variables
-    axarr = timeseries.plot(marker=".", subplots=True, x=nm_xaxis,
-                            legend=False)
-    for nm, ax in zip(nms_yaxis, axarr):
-        ax.set_ylabel(nm)
-    fig = axarr[0].figure
-    if casename is not None:
-        axarr[0].set_title(casename)
-    axarr[-1].set_xlabel(nm_xaxis)
-    fig.tight_layout()
-    fig.savefig(dir_out / f"{stem}timeseries_vars.svg")
-    plt.close(fig)
-    # Produce one small plot for each variable
-    timeseries = timeseries.reset_index()
-    for nm in nms_yaxis:
-        fig = plot_timeseries_var(timeseries, nm, casename)
-        fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
