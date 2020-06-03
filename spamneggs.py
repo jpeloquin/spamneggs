@@ -517,9 +517,16 @@ def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
     sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
     for i in range(n):
         corr = data.loc[i][params + varnames].corr()
+        cov = data.loc[i][params + varnames].cov()
         for pi, pnm in enumerate(params):
             for vi, vnm in enumerate(varnames):
-                sensitivity_vectors[vi][i][pi] = corr[pnm][vnm]
+                ρ = corr[pnm][vnm]
+                σ = cov[vnm][vnm]
+                # Coerce correlation to zero if it is nan only because
+                # the output variable has no variance
+                if np.isnan(ρ) and σ == 0:
+                    ρ = 0
+                sensitivity_vectors[vi][i][pi] = ρ
 
     # Plot the heatmap
     fontsize_axlabel = 11
