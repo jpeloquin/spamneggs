@@ -13,7 +13,7 @@ from matplotlib.figure import Figure
 from matplotlib import ticker
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.cm import ScalarMappable
-from mpl_toolkits.axes_grid1 import host_subplot
+from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 import multiprocessing as mp
 import numpy as np
@@ -501,16 +501,18 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
 
 
-def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir):
+def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
+                         corr_threshold=1e-6):
     """Return times series sensitivity vector heat map for each parameter"""
-    # Heat map showing correlation of each time series variable's values
-    # with each parameter
+    # Data munging
     params = [c for c in tsdata.columns if c.endswith(" [param]")]
     varnames = [c for c in tsdata.columns if c.endswith(" [var]")]
     # ^ These names are tagged with their type to avoid name collisions.
     # The plain names passed as arguments cannot be used.
     data = tsdata.copy()  # need to mutate the table
     data = data.drop("Time", axis=1).set_index(["Step", "Case"])
+
+    # Calculate sensitivity vectors
     n = len(data.index.levels[0])
     sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
     for i in range(n):
@@ -518,51 +520,119 @@ def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir):
         for pi, pnm in enumerate(params):
             for vi, vnm in enumerate(varnames):
                 sensitivity_vectors[vi][i][pi] = corr[pnm][vnm]
-    sensitivity_vectors = np.concatenate(sensitivity_vectors, axis=0)
-    # Plot heatmap
-    fig = Figure()
+
+    # Plot the heatmap
+    fontsize_axlabel = 11
+    fontsize_figlabel = 12
+    fontsize_ticklabel = 9
+    lh = 1.5  # multiple of font size to reserve for labels
+
+    # Calculate widths of figure elements
+    dendro_axw = 12/72*len(params)
+    fig_llabelw = lh*fontsize_figlabel/72
+    dendro_boxw = fig_llabelw + dendro_axw
+    cbar_axw = 12/72
+    # ^ width of colorbar axes
+    cbar_padr = 48/72
+    # ^ padding b/w colorbar axes and axes of /next/ heat map
+    cbar_padl = 4/72
+    # ^ padding b/w heat map axes and its colorbar axes
+    hmap_padl = lh*fontsize_axlabel/72
+    hmap_axw = 4  # width of individual heat map axes object
+    hmap_boxw = (hmap_padl + hmap_axw + cbar_padl
+                    + cbar_axw + cbar_padr)
+    hmap_boxwspace = fontsize_axlabel/72
+    hmap_areaw = (hmap_boxw * len(varnames) +
+                     hmap_boxwspace * (len(varnames) - 1))
+    figw = (dendro_boxw + hmap_areaw)
+
+    # Calculate heights of figure elements
+    fig_tlabelh = fontsize_figlabel/72  # "Time series variables"
+    hmap_tlabelh = lh*fontsize_axlabel/72  # Variable names
+    hmap_blabelh = lh*fontsize_axlabel/72  # "Step"
+    hmap_axh = 0.75
+    hmap_vspace = (lh+0.5)*fontsize_ticklabel/72  # allocated for x tick labels
+    figh = hmap_blabelh + (hmap_vspace + hmap_axh)*len(params) + hmap_tlabelh + fig_tlabelh
+
+    fig = Figure(figsize=(figw, figh))
     FigureCanvas(fig)
-    gs = mpl.gridspec.GridSpec(2, 2, figure=fig,
-                               height_ratios=[1, 5],
-                               width_ratios=[25, 1],
-                               hspace=0)
-    cmap = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
-                                              colors.diverging_bky_60_10_c30_n256)
-    cnorm = mpl.colors.Normalize(vmin=-1, vmax=1)
+
     # Plot dendrogram
-    dn_ax = fig.add_subplot(gs[0,0])
-    dn_ax.axis("off")
-    dist = scipy.spatial.distance.pdist(
-        sensitivity_vectors[np.all(~np.isnan(sensitivity_vectors), axis=1)].T,
-        metric="correlation")
+    b = hmap_blabelh + 0.5*hmap_vspace
+    h = (hmap_vspace + hmap_axh)*len(params)
+    dn_ax = fig.add_axes((fig_llabelw/figw, b/figh, dendro_axw/figw, h/figh))
+    arr = np.concatenate(sensitivity_vectors, axis=0)
+    # ^ collapse across variables
+    arr = arr[np.all(~np.isnan(arr), axis=1)].T
+    # ^ NaN would break the vector distance calculations
+    dist = scipy.spatial.distance.pdist(arr, metric="correlation")
     links = scipy.cluster.hierarchy.linkage(dist, method="average",
                                             metric="correlation")
     dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax,
-                                            orientation="top")
-    # Plot heatmap
-    ax = fig.add_subplot(gs[1,0])
-    im = ax.imshow(sensitivity_vectors[:, dn["leaves"]],
-                   aspect="auto",
-                   origin="upper",
-                   interpolation="nearest",
-                   cmap=cmap, norm=cnorm,
-                   extent=(-0.5, len(params) - 0.5,
-                           -0.5, len(varnames) - 0.5))
-    ax.set_xticks([i for i in range(len(params))])
-    ax.set_xticklabels([params[i].rstrip(" [param]")
-                        for i in dn["leaves"]])
-    ax.set_xlabel("Parameters")
-    ax.set_yticks([i for i in reversed(range(len(varnames)))])
-    # ^ reversed b/c origin="upper"
-    ax.set_yticklabels([nm.rstrip(" [var]") for nm in varnames],
-                       {"rotation": "vertical"})
-    ax.set_ylabel("Time series variables")
-    # Add colorbar
-    cbar_ax = fig.add_subplot(gs[1,1])
-    cbar = fig.colorbar(im, cax=cbar_ax)
-    cbar.set_label("Correlation coefficient")
+                                            orientation="left")
+    dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
+    dn_ax.set_ylabel("Parameters", fontsize=fontsize_figlabel)
+    dn_ax.tick_params(bottom=False, right=False, left=False, top=False,
+                      labelbottom=False, labelright=False,
+                      labelleft=False, labeltop=False)
+    for spine in ["left", "right", "top", "bottom"]:
+        dn_ax.spines[spine].set_visible(False)
+
+    # Plot heatmaps
+    l0 = fig_llabelw + dendro_axw
+    # ^ left coord of heatmap area
+    b0 = hmap_blabelh + 0.5*hmap_vspace
+    # ^ bottom coord of heatmap area, aligned to edge of dendrogram area
+    for irow, iparam in enumerate(reversed(dn["leaves"])):
+        for ivar, varname in enumerate(varnames):
+            ρ = sensitivity_vectors[ivar, :, iparam]
+            # Choose range for color scale
+            cscale_absmax = max(np.nanmax(np.abs(ρ)), corr_threshold)
+            cmap = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
+                                                      colors.diverging_bky_60_10_c30_n256)
+            cnorm = mpl.colors.Normalize(vmin=-cscale_absmax,
+                                         vmax=cscale_absmax)
+
+            # Draw the heatmap part
+            l = l0 + hmap_padl + ivar*hmap_boxw
+            b = b0 + 0.5*hmap_vspace + irow*(hmap_vspace + hmap_axh)
+            ax = fig.add_axes((l/figw, b/figh, hmap_axw/figw, hmap_axh/figh))
+            arr = sensitivity_vectors[ivar]
+            im = ax.imshow(np.atleast_2d(ρ),
+                           aspect="auto",
+                           origin="upper",
+                           interpolation="nearest",
+                           cmap=cmap, norm=cnorm,
+                           extent=(tsdata["Step"].iloc[0] - 0.5,
+                                   tsdata["Step"].iloc[-1] + 0.5,
+                                   -0.5, 0.5))
+            ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(integer=True))
+            ax.tick_params(axis="x", labelsize=fontsize_ticklabel)
+            ax.set_ylabel(params[iparam].rstrip(" [param]"),
+                          fontsize=fontsize_axlabel)
+            ax.tick_params(axis="y", left=False, labelleft=False)
+            if irow == 0:
+                ax.set_xlabel("Step", fontsize=fontsize_axlabel)
+            if irow == len(params) - 1:
+                ax.set_title(varname.rstrip(" [var]"), fontsize=fontsize_figlabel)
+
+            # Draw the colorbar part
+            l = l + hmap_axw + cbar_padl
+            cbar_ax = fig.add_axes((l/figw, b/figh, cbar_axw/figw, hmap_axh/figh))
+            cbar = fig.colorbar(im, cax=cbar_ax)
+            cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
+            cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
+            cbar.ax.tick_params(labelsize=fontsize_ticklabel)
+            cbar.ax.yaxis.get_offset_text().set(size=fontsize_ticklabel)
+            # ^ sets size of "1e-6" or similar exponent (currently not
+            # used b/c of tick formatter)
+            cbar.set_label("ρ [1]", fontsize=fontsize_ticklabel)
+            cbar.ax.set_label("ρ")
+            cbar.ax.yaxis.set_label_coords(2.7, 0.5)
+
+    # Add whole-plot labels
+    fig.suptitle("Time series variables", fontsize=fontsize_figlabel)
     # Write figure to disk
-    fig.tight_layout()
     fig.savefig(analysis_dir / f"{analysis_name}_-_sensitivity_vector_heatmap.svg")
     #
     # Plot the distance matrix.  Reorder the parameters to match the
