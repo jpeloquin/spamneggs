@@ -737,7 +737,8 @@ def plot_tsvars_heat_map(tsdata, analysis_name, analysis_dir,
                     extent=(-0.5, len(params) - 0.5,
                             -0.5, len(params) - 0.5))
     for (i, j), d in np.ndenumerate(np.flipud(dist)):
-        ax.text(j, i, '{:0.2f}'.format(d), ha='center', va='center')
+        ax.text(j, i, '{:0.2f}'.format(d), ha='center', va='center',
+                backgroundcolor=(1,1,1,0.5))
     cbar = fig.colorbar(im)
     cbar.set_label("Distance correlation")
     ax.set_title("Sensitivity vector distance matrix")
