@@ -1,6 +1,7 @@
  # Peter Kovesi's CET-D6: diverging_bky_60-10_c30_n256
  # https://peterkovesi.com/projects/colourmaps/
  # https://arxiv.org/abs/1509.03700
+ # Used under CC-BY
 diverging_bky_60_10_c30_n256 = {
 "red":
 ((0,0.056674,0.056674),
