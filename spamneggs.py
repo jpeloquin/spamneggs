@@ -52,7 +52,10 @@ class Analysis:
         self.parameters = parameters
         self.variables = variables
         self.name = name
-        self.directory = Path(directory)
+        if directory is None:
+            self.directory = Path(name).absolute()
+        else:
+            self.directory = Path(directory).absolute()
 
     @classmethod
     def from_xml(cls, pth):
