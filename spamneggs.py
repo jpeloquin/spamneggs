@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 # Third-party packages
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -218,7 +219,7 @@ def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
             raise Exception(f'{np.sum(m_error)} cases terminated in an error.  Because `on_febio_error` = "{on_febio_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.')
         elif on_febio_error == "stop":
             # Error message was printed above
-            exit
+            sys.exit()
     # Tabulate and plot the results
     tabulate(analysis)
     plot_sensitivity(analysis)
