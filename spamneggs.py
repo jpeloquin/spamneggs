@@ -93,20 +93,9 @@ class AnalysisCase:
                  name=None,
                  case_dir=None):
         self.analysis = analysis
-        self._model = None
         self.parameters = parameters
         self.name = name
         self.case_dir = Path(case_dir) if case_dir is not None else None
-
-    @property
-    def model(self):
-        # Not sure if caching the model is a good idea.  It won't update when
-        # the parameters change.  But then again AnalysisCase is supposed to be
-        # used as if immutable.  (Maybe it should be a named tuple?)
-        import ipdb; ipdb.set_trace()
-        if self._model is None:
-            self._model = self.analysis.model(self)
-        return self._model
 
     @property
     def variables(self):
