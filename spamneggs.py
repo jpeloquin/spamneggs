@@ -86,7 +86,7 @@ class Analysis:
         return cls(model, parameters, variables, name, analysis_dir)
 
 
-class AnalysisCase:
+class Case:
     def __init__(self,
                  analysis,
                  parameters: list,
@@ -105,10 +105,10 @@ class AnalysisCase:
 class FEBioXMLModel:
     """A model defined by an FEBio XML tree
 
-    FEBioXMLModel is callable.  It accepts a single AnalysisCase
+    FEBioXMLModel is callable.  It accepts a single Case
     instance as an argument and returns a concrete FEBio XML tree, with
     the contents of all parameter elements replaced by the parameter
-    values specified in the AnalysisCase.
+    values specified in the Case.
 
     """
     def __init__(self, tree, parameters: dict):
@@ -124,7 +124,7 @@ class FEBioXMLModel:
         self.tree = tree
         self.parameters = parameters
 
-    def __call__(self, case: AnalysisCase):
+    def __call__(self, case: Case):
         # Create a copy of the tree so we don't alter the original tree.  This
         # is necessary in case multiple worker threads are generating models
         # from the same FEBioXMLModel object.
@@ -250,7 +250,7 @@ def gen_sensitivity_cases(analysis, nlevels):
         pvalues = {k: row[k] for k in analysis.parameters}
         case_name = f"{analysis.name}_-_case={i}"
         case_dir = cases_dir / case_name
-        case = AnalysisCase(analysis, pvalues, case_name, case_dir)
+        case = Case(analysis, pvalues, case_name, case_dir)
         tree = analysis.model(case)
         # Write the case's FEBio XML tree to disk
         pth = cases_dir / f"{case.name}.feb"
