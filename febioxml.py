@@ -23,6 +23,49 @@ TAG_FOR_ENTITY_TYPE = {"node": "node_data",
                        "connector": "rigid_connector_data"}
 
 
+class PlotfileSelector:
+    def __init__(self, variable, component, temporality, time,
+                 time_unit, entity, entity_id, region=None, parent_entity=None):
+        if __debug__:
+            _validate_time_selector(temporality, time, time_unit)
+        self.variable = variable
+        self.component = component
+        self.temporality = temporality
+        self.time = time
+        self.time_unit = time_unit
+        self.entity = entity
+        self.entity_id = entity_id
+        self.region = region
+        self.parent_entity = parent_entity
+
+    @classmethod
+    def from_expr(cls, expr):
+        var = parse_var_selector(expr)
+        return cls(var["variable"], var["component"],
+                   var["temporality"], var["time"], var["time_enum"],
+                   var["entity"], var["entity ID"], var["region"],
+                   var["parent"])
+
+
+class TextdataSelector:
+    def __init__(self, variable, temporality, time, time_unit, entity,
+                 entity_id):
+        if __debug__:
+            _validate_time_selector(temporality, time, time_unit)
+        self.variable = variable
+        self.temporality = temporality
+        self.time = time
+        self.time_unit = time_unit
+        self.entity = entity
+        self.entity_id = entity_id
+
+    @classmethod
+    def from_expr(cls, expr):
+        var = parse_var_selector(expr)
+        return cls(var["variable"], var["temporality"], var["time"],
+                   var["time_enum"], var["entity"], var["entity ID"])
+
+
 def _to_number(s, dtype=float):
     """Convert numeric string to int or float as appropriate."""
     try:
@@ -59,6 +102,15 @@ def _parse_selector_part(text):
     return name, ids
 
 
+def _validate_time_selector(temporality, time, time_unit):
+    if not temporality in ("instantaneous", "time series"):
+        raise ValueError(f"`temporality` must equal 'instantaneous' or 'time series'.  '{time_unit}' was provided.")
+    if temporality == "time series" and len(time) != 2:
+        raise ValueError(f"For a time series variable, `time` must be a sequence of two values (lower and upper bound).  '{time}' was provided.")
+    if not time_unit in ("step", "time"):
+        raise ValueError(f"`time_unit` must equal 'step' or 'time'.  '{time_unit}' was provided.")
+
+
 def parse_var_selector(text):
     """Parse the parts of a variable selector for plotfiles and logfiles."""
     var_info = {"entity": None,  # element, face, node, connector, or body
@@ -67,9 +119,8 @@ def parse_var_selector(text):
                 "component": tuple(),
                 "region": None,
                 "parent": None,
-                "type": "",  # instantaneous or time series
-                "time_enum": None,  # time, step, or (if all time
-                                    # points) None
+                "temporality": "",  # instantaneous or time series
+                "time_enum": "step",  # time or step
                 "time": None}
     groups = text.strip().split("@")
     parts = groups[0].strip().split(".")
@@ -115,14 +166,14 @@ def parse_var_selector(text):
         # 32-bit floats, and we want to retain the associated precision
         # so that time point lookups can be done intelligently.
         if len(bounds) == 1:
-            var_info["type"] = "instantaneous"
+            var_info["temporality"] = "instantaneous"
             var_info["time"] = _to_number(bounds[0], dtype=np.float32)
         elif len(bounds) == 2:
-            var_info["type"] = "time series"
+            var_info["temporality"] = "time series"
             var_info["time"] = (_to_number(bounds[0], dtype=np.float32),
                                 _to_number(bounds[1], dtype=np.float32))
     else:
-        var_info["type"] = "time series"
+        var_info["temporality"] = "time series"
         var_info["time"] = (-inf, inf)
     return var_info
 
@@ -163,12 +214,12 @@ def required_outputs(variables):
                           "connector": {"vars": set(),
                                         "ids": set()}}
     plotfile_selections = set()
-    for var in variables:
-        if var["source"] == "logfile":
-            logfile_selections[var["entity"]]["vars"].add(var["variable"])
-            logfile_selections[var["entity"]]["ids"].add(var["entity ID"])
-        elif var["source"] == "plotfile":
-            plotfile_selections.add(var["variable"])
+    for nm, var in variables.items():
+        if isinstance(var, TextdataSelector):
+            logfile_selections[var.entity]["vars"].add(var.variable)
+            logfile_selections[var.entity]["ids"].add(var.entity_id)
+        elif isinstance(var, PlotfileSelector):
+            plotfile_selections.add(var.variable)
     return logfile_selections, plotfile_selections
 
 
@@ -279,12 +330,17 @@ def get_parameters(tree):
 
 
 def get_variables(tree):
-    variables = []
+    variables = {}
     for e in tree.findall("preprocessor/analysis/variables/var"):
-        var = parse_var_selector(e.text)
-        var["name"] = e.attrib["name"]
-        var["source"] = e.attrib["source"]
-        variables.append(var)
+        if e.attrib["source"] == "logfile":
+            var = TextdataSelector.from_expr(e.text)
+        elif e.attrib["source"] == "plotfile":
+            var = PlotfileSelector.from_expr(e.text)
+        elif e.attrib["source"] == "function":
+            raise NotImplementedError
+        else:
+            raise ValueError(f"Only variables with source = 'logfile', 'plotfile', or 'function' are supported.  '{e.attrib['source']}' was provided.")
+        variables[e.attrib["name"]] = var
     return variables
 
 
@@ -309,76 +365,74 @@ def tabulate_case(analysis, case_file):
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {},
               "time series variables": {}}
-    for var in analysis.variables:
-        if var["source"] == "plotfile":
+    for varname, var in analysis.variables.items():
+        if isinstance(var, PlotfileSelector):
             # Get ID for region selector
-            if var["region"] is None:
+            if var.region is None:
                 region_id = None
             else:
-                region_id = var["region"]["ID"]
+                region_id = var.region["ID"]
             # Get ID for parent selector
-            if var["parent"] is None:
+            if var.parent_entity is None:
                 parent_id = None
             else:
-                parent_id = var["parent"]["ID"]
-            if var["type"] == "instantaneous":
+                parent_id = var.parent_entity["ID"]
+            if var.temporality == "instantaneous":
                 # Convert time selector to step selector
-                if var["time_enum"] == "time":
-                    step = find_closest_timestep(var["time"],
+                if var.time_unit == "time":
+                    step = find_closest_timestep(var.time,
                                                  xplt_data.step_times,
                                                  np.array(range(len(xplt_data.step_times))))
-                value = xplt_data.value(var["variable"], step,
-                                        var["entity ID"],
+                value = xplt_data.value(var.variable, step,
+                                        var.entity_id,
                                         region_id, parent_id)
                 # Apply component selector
-                for c in var["component"]:
+                for c in var.component:
                     value = value[c]
                 # Save selected value
-                record["instantaneous variables"][var["name"]] =\
+                record["instantaneous variables"][varname] =\
                     {"value": value}
-            elif var["type"] == "time series":
-                data = xplt_data.values(var["variable"],
-                                        entity_id=var["entity ID"],
+            elif var.temporality == "time series":
+                data = xplt_data.values(var.variable,
+                                        entity_id=var.entity_id,
                                         region_id=region_id,
                                         parent_id=parent_id)
-                values = np.moveaxis(np.array(data[var["variable"]]), 0, -1)
-                for c in var["component"]:
+                values = np.moveaxis(np.array(data[var.variable]), 0, -1)
+                for c in var.component:
                     values = values[c]
-                record["time series variables"][var["name"]] =\
+                record["time series variables"][varname] =\
                     {"times": xplt_data.step_times,
                      "steps": np.array(range(len(xplt_data.step_times))),
                      "values": values}
-        elif var["source"] == "logfile":
+        elif isinstance(var, TextdataSelector):
             # Apply entity type selector
-            tab = text_data[var["entity"]]
+            tab = text_data[var.entity]
             # Apply entity ID selector
-            tab = tab[tab["Item"] == var["entity ID"]]
+            tab = tab[tab["Item"] == var.entity_id]
             tab = tab.set_index("Step")
-            if var["type"] == "instantaneous":
-                # Convert time selector to step selector
-                if var["time_enum"] == "time":
-                    step = find_closest_timestep(var["time"],
+            if var.temporality == "instantaneous":
+                # Convert time selector to step selector.  The selector
+                # has internal validation, so we can assume the time
+                # unit is valid.
+                if var.time_unit == "time":
+                    step = find_closest_timestep(var.time,
                                                  tab["Time"], tab.index)
                     if step == 0:
                         raise ValueError("Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0.")
                     if step not in tab.index:
-                        raise ValueError(f"A value for {var['variable']} was requested for step = {step}, but this step is not present in the FEBio text data output.")
-                elif var["time_enum"] == "step":
-                    step = var["time"]
-                else:
-                    msg = f"Time selectors of type {var['time_enum']} "\
-                        "are not supported.  Use 'step' or 'time'."
-                    raise ValueError(msg)
+                        raise ValueError(f"A value for {var.variable} was requested for step = {step}, but this step is not present in the FEBio text data output.")
+                elif var.time_unit == "step":
+                    step = var.time
                 # Apply variable name and time selector
-                value = tab[var["variable"]].loc[step]
-                record["instantaneous variables"][e.attrib["name"]] = {"value": value}
-            elif var["type"] == "time series":
-                record["time series variables"][e.attrib["name"]] =\
+                value = tab[var.variable].loc[step]
+                record["instantaneous variables"][varname] = {"value": value}
+            elif var.temporality == "time series":
+                record["time series variables"][varname] =\
                     {"times": tab["Time"].values,
                      "steps": tab.index.values,
-                     "values": tab[var["variable"]].values}
+                     "values": tab[var.variable].values}
         else:
-            raise ValueError(f"'{var['source']}' not supported as a variable source.")
+            raise ValueError(f"{var} not supported as a variable type.")
     # Assemble the time series table
     tab_timeseries = {"Time": [],
                       "Step": []}
