@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 import psutil
 import scipy.cluster
+# In-house packages
+import febtools as feb
 # Same-package modules
 from . import febioxml as fx
 from . import colors
@@ -87,19 +89,24 @@ class Analysis:
 
 
 class Case:
-    def __init__(self,
-                 analysis,
-                 parameters: list,
-                 name=None,
-                 case_dir=None):
+    def __init__(self, analysis, parameters: list, name=None,
+                 sim_file=None, case_dir=None, solution=None):
         self.analysis = analysis
         self.parameters = parameters
         self.name = name
+        self.sim_file = sim_file
         self.case_dir = Path(case_dir) if case_dir is not None else None
+        self._solution = solution
 
     @property
     def variables(self):
         return self.analysis.variables
+
+    @property
+    def solution(self):
+        if self._solution is None:
+            self._solution = feb.load_model(self.sim_file)
+        return self._solution
 
 
 class FEBioXMLModel:
@@ -281,23 +288,22 @@ def read_case_data(case_file):
     return record, timeseries
 
 
-def tabulate_case_write(analysis, case_file, dir_out=None):
+def tabulate_case_write(case, dir_out=None):
     """Tabulate variables for single case analysis & write to disk."""
-    case_file = Path(case_file)
     # Find/create output directory
     if dir_out is None:
-        dir_out = case_file.parent
+        dir_out = case.sim_file.parent
     else:
         dir_out = Path(dir_out)
     if not dir_out.exists():
         dir_out.mkdir()
     # Tabulate the variables
-    record, timeseries = fx.tabulate_case(analysis, case_file)
-    with open(dir_out / f"{case_file.stem}_vars.json", "w") as f:
+    record, timeseries = fx.tabulate_case(case)
+    with open(dir_out / f"{case.sim_file.stem}_vars.json", "w") as f:
         write_record_to_json(record, f)
-    timeseries.to_csv(dir_out / f"{case_file.stem}_timeseries_vars.csv",
+    timeseries.to_csv(dir_out / f"{case.sim_file.stem}_timeseries_vars.csv",
                       index=False)
-    plot_case_tsvars(timeseries, dir_out=dir_out, casename=case_file.stem)
+    plot_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
     return record, timeseries
 
 
@@ -371,9 +377,15 @@ def tabulate(analysis: Analysis):
     if len(cases) == 0:
         raise ValueError(f"No cases to tabulate in '{pth_cases}'")
     for i in cases.index:
-        record, timeseries = tabulate_case_write(analysis,
-                                                 analysis.directory / cases["path"].loc[i],
-                                                 dir_out=analysis.directory / "case_output")
+        casename = Path(cases["path"].loc[i]).stem
+        case = Case(analysis,
+                    {p: cases[p].loc[i] for p in analysis.parameters},
+                    name=casename,
+                    sim_file=analysis.directory / cases["path"].loc[i],
+                    case_dir=analysis.directory / "cases" / casename,
+                    solution=None)
+        record, timeseries = tabulate_case_write(case, \
+            dir_out=analysis.directory / "case_output")
         ivars_table["case"].append(i)
         for p in analysis.parameters:
             k = f"{p} [param]"

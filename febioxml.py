@@ -23,6 +23,34 @@ TAG_FOR_ENTITY_TYPE = {"node": "node_data",
                        "connector": "rigid_connector_data"}
 
 
+# TODO: FunctionVar, PlotfileSelector, and TextdataSelector shouldn't be
+# in febioxml.py, since they're fundamental datatypes for spamneggs, but
+# they use parse_var_selector, so they're here to avoid a circular
+# import.  Organize the files better later.
+
+
+class FunctionVar:
+    def __init__(self, expr, env):
+        self.expr = expr
+        self.env = env
+
+    def __call__(self, case):
+        return eval(self.expr, self.env, {"case": case})
+
+
+class TimeSeries:
+    def __init__(self, times, steps, values):
+        self.time = np.array(times)
+        self.step = np.array(steps)
+        self.value = np.array(values)
+        if __debug__:
+            n = len(self.time)
+            if len(self.step) != n:
+                raise ValueError(f"The number of step indices must equal the number of time points.  {len(self.step)} step indices and {len(self.time)} time points were provided.")
+            if len(self.value) != n:
+                raise ValueError(f"The number of values must equal the number of time points.  {len(self.value)} values and {len(self.time)} time points were provided.")
+
+
 class PlotfileSelector:
     def __init__(self, variable, component, temporality, time,
                  time_unit, entity, entity_id, region=None, parent_entity=None):
@@ -344,29 +372,26 @@ def get_variables(tree):
     return variables
 
 
-def tabulate_case(analysis, case_file):
-    """Tabulate variables for single case analysis."""
-    case_file = Path(case_file)
-    case_tree = read_febio_xml(case_file)
-    # Read the plotfile
-    pth_xplt = case_file.with_suffix(".xplt")
-    with open(pth_xplt, "rb") as f:
-        xplt_data = XpltData(f.read())
+def tabulate_case(case):
+    """Tabulate variables for a single analysis case."""
+    case_tree = read_febio_xml(case.sim_file)
     # Read the text data files
     text_data = {}
     for entity_type in ("node", "element", "body", "connector"):
         tagname = TAG_FOR_ENTITY_TYPE[entity_type]
-        fname = f"{case_file.stem}_-_{tagname}.txt"
+        fname = case.sim_file.with_suffix("").name + f"_-_{tagname}.txt"
+        pth = case.sim_file.parent / fname
         e_textdata = case_tree.find(f"Output/logfile/{tagname}[@file='{fname}']")
         if e_textdata is not None:
-            text_data[entity_type] = textdata_table(case_file.parent / fname)
+            text_data[entity_type] = textdata_table(pth)
         else:
             text_data[entity_type] = None
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {},
               "time series variables": {}}
-    for varname, var in analysis.variables.items():
+    for varname, var in case.variables.items():
         if isinstance(var, PlotfileSelector):
+            xplt_data = case.solution.solution
             # Get ID for region selector
             if var.region is None:
                 region_id = None
@@ -431,6 +456,15 @@ def tabulate_case(analysis, case_file):
                     {"times": tab["Time"].values,
                      "steps": tab.index.values,
                      "values": tab[var.variable].values}
+        elif isinstance(var, FunctionVar):
+            v = var(case)
+            if not isinstance(v, TimeSeries):
+                record["instantaneous variables"][varname] = {"value": v}
+            else:
+                record["time series variables"][varname] =\
+                    {"times": v.time,
+                     "steps": v.step,
+                     "values": v.value}
         else:
             raise ValueError(f"{var} not supported as a variable type.")
     # Assemble the time series table
