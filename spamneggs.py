@@ -256,14 +256,14 @@ def gen_sensitivity_cases(analysis, nlevels):
     for i, row in tab_cases.iterrows():
         pvalues = {k: row[k] for k in analysis.parameters}
         case_name = f"{analysis.name}_-_case={i}"
-        case_dir = cases_dir / case_name
-        case = Case(analysis, pvalues, case_name, case_dir)
+        case = Case(analysis, pvalues, case_name,
+                    sim_file=cases_dir / f"{case_name}.feb",
+                    case_dir=cases_dir / case_name)
         tree = analysis.model(case)
         # Write the case's FEBio XML tree to disk
-        pth = cases_dir / f"{case.name}.feb"
-        with open(pth, "wb") as f:
+        with open(case.sim_file, "wb") as f:
             fx.write_febio_xml(tree, f)
-        feb_paths.append(pth.relative_to(analysis.directory))
+        feb_paths.append(case.sim_file.relative_to(analysis.directory))
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
