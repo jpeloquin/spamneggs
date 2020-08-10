@@ -35,7 +35,7 @@ class FunctionVar:
         self.env = env
 
     def __call__(self, case):
-        return eval(self.expr, self.env, {"case": case})
+        return eval(self.expr, self.env, {"case": case, "model": case.solution})
 
 
 class TimeSeries:
