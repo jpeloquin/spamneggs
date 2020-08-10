@@ -392,6 +392,18 @@ def tabulate_case(case):
     for varname, var in case.variables.items():
         if isinstance(var, PlotfileSelector):
             xplt_data = case.solution.solution
+            # Check component selector validity
+            dtype = xplt_data.variables[var.variable]["type"]
+            oneids = (str(i + 1) for i in var.component)
+            if dtype == "float" and len(var.component) != 0:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 0 dimensions."
+                raise ValueError(msg)
+            elif dtype == "vec3f" and len(var.component) != 1:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 1 dimension."
+                raise ValueError(msg)
+            elif dtype == "mat3fs" and len(var.component) != 2:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 2 dimensions."
+                raise ValueError(msg)
             # Get ID for region selector
             if var.region is None:
                 region_id = None
