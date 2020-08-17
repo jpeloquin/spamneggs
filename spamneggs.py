@@ -562,10 +562,10 @@ def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
             cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE))
             cbar.set_label(pname)
             fig.tight_layout()
-            fig.savefig(analysis.directory /
-                       "_-_".join((analysis.name,
-                                   "timeseries_var_lineplot",
-                                   f"{varname}_vs_{pname}.svg")))
+            nm = "_-_".join((analysis.name,
+                             "timeseries_var_lineplot",
+                             f"{varname}_vs_{pname}.svg"))
+            fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
     plot_tsvars_heat_map(analysis, tsdata, norm="none")
     plot_tsvars_heat_map(analysis, tsdata, norm="all")
