@@ -351,22 +351,42 @@ def run_febio_unchecked(pth_feb, threads=psutil.cpu_count(logical=False)):
 
 def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
     """Run FEBio and return the process object."""
+    # FEBio's error handling is interesting, in a bad way.  XML file
+    # read errors are only output to stdout.  If there is a read error,
+    # no log file is created and if an old log file exists, it is not
+    # updated to reflect the file read error.  Model summary info is
+    # only output to the log file.  Time stepper info is output to both
+    # stdout and the log file, but the verbosity of the stdout output
+    # can be adjusted by the user.  We want to ensure (1) the log file
+    # always reflects the last run and (2) all relevant error messages
+    # are written to the log file.
     pth_feb = Path(pth_feb)
+    pth_log = pth_feb.with_suffix(".log")
     env = os.environ.copy()
     env.update({"OMP_NUM_THREADS": f"{threads}"})
     proc = subprocess.run(['febio', '-i', pth_feb.name],
                           cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE,
-                          env=env)
-    # FEBio doesn't always write a log if it hits a error, but the
-    # content that would have been logged is dumped to stdout.  So we'll
-    # write the stdout output to disk as a workaround.
+                          env=env,
+                          text=True)
+    # FEBio does return an error code on "Error Termination"; I checked.
     if proc.returncode != 0:
-        # FEBio truly does return an error code on "Error Termination"
-        pth_log = pth_feb.with_suffix(".log")
-        with open(pth_log, "wb") as f:
-            f.write(proc.stdout)
+        # If there is a file read error, we need to write the captured
+        # stdout to the log file, because only it has information about
+        # the file read error.  Otherwise, we need to leave the log file
+        # in place, because it has unique information.
+        for ln in proc.stdout.splitlines():
+            if ln.startswith("Reading file"):
+                if ln.endswith("SUCCESS!"):
+                    # No file read error
+                    break
+                elif ln.endswith("FAILED!"):
+                    # File read error; send it to the log file
+                    with open(pth_log, "w", encoding="utf-8") as f:
+                        f.write(proc.stdout)
+                else:
+                    raise NotImplementedError(f"spamneggs failed to parse FEBio file read status '{ln}'")
     return proc
 
 
