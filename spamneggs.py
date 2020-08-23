@@ -337,9 +337,10 @@ def tabulate_analysis_tsvars(analysis, cases_file):
 
 def run_febio_checked(pth_feb, threads=psutil.cpu_count(logical=False)):
     """Run FEBio, raising exception on error."""
+    pth_feb = Path(pth_feb)
     proc = _run_febio(pth_feb, threads=threads)
     if proc.returncode != 0:
-        raise FEBioError(f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_log}.")
+        raise FEBioError(f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_feb.with_suffix('.log')}.")
     return proc.returncode
 
 
