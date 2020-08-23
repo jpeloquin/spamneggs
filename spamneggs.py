@@ -364,6 +364,10 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
     pth_log = pth_feb.with_suffix(".log")
     env = os.environ.copy()
     env.update({"OMP_NUM_THREADS": f"{threads}"})
+    # Check for the existance of the FEBio XML file ourselves, since if
+    # the file doesn't exist FEBio will act as if it was malformed.
+    if not pth_feb.exists():
+        raise ValueError(f"'{pth_feb}' does not exist or is not accessible.")
     proc = subprocess.run(['febio', '-i', pth_feb.name],
                           cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
                           stdout=subprocess.PIPE,
