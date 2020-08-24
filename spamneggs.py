@@ -152,7 +152,7 @@ class FEBioXMLModel:
 
 
 def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
-    """Run a sensitivity analysis from spam-infused FEBio XML."""
+    """Run a sensitivity analysis from an analysis object."""
     # Validate input
     on_febio_error_options = ("stop", "hold", "ignore")
     if not on_febio_error in on_febio_error_options:
