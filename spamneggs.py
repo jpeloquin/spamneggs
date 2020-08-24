@@ -161,7 +161,6 @@ def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
     cases, pth_cases_table = gen_sensitivity_cases(analysis, nlevels)
     # Run the cases
     run_status = [None for i in range(len(cases))]
-    febio_error = False
     run_case = partial(run_febio_unchecked, threads=1)
     # Potential improvement: increase OMP_NUM_THREADS for last few jobs
     # as more cores are free.  In most cases this should make little
