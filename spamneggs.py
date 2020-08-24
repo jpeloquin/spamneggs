@@ -42,6 +42,11 @@ class FEBioError(Exception):
     pass
 
 
+class CaseGenerationError(Exception):
+    """Raised when case generation terminates in an error."""
+    pass
+
+
 class Analysis:
 
     def __init__(self,
@@ -151,26 +156,29 @@ class FEBioXMLModel:
         return tree
 
 
-def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
-    """Run a sensitivity analysis from an analysis object."""
+def _validate_on_case_error(value):
     # Validate input
-    on_febio_error_options = ("stop", "hold", "ignore")
-    if not on_febio_error in on_febio_error_options:
-        raise ValueError(f"on_febio_error = {on_febio_error}; allowed values are {','.join(on_febio_error_options)}")
+    on_case_error_options = ("stop", "hold", "ignore")
+    if not value in on_case_error_options:
+        raise ValueError(f"on_case_error = {value}; allowed values are {','.join(on_case_error_options)}")
+
+
+def run_sensitivity(analysis, nlevels, on_case_error="stop"):
+    """Run a sensitivity analysis from an analysis object."""
+    _validate_on_case_error(on_case_error)
     # Create the cases
-    cases, pth_cases_table = gen_sensitivity_cases(analysis, nlevels)
-    # Run the cases
-    run_status = [None for i in range(len(cases))]
+    cases, pth_cases_table = gen_sensitivity_cases(analysis, nlevels, on_case_error=on_case_error)
+    good_case_ids = cases.index[cases["status"] == "generation complete"]
     run_case = partial(run_febio_unchecked, threads=1)
     # Potential improvement: increase OMP_NUM_THREADS for last few jobs
-    # as more cores are free.  In most cases this should make little
+    # as more cores are free.  In most cases this would make little
     # difference, though.
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
         # Submit the first round of cases
         futures = {pool.submit(run_case,
-                               analysis.directory / cases["path"].loc[case_id]): case_id
-                   for case_id in cases.index[:NUM_WORKERS]}
-        pending_cases = set([case_id for case_id in cases.index[NUM_WORKERS:]])
+                               analysis.directory / cases.loc[case_id, "path"]): case_id
+                   for case_id in good_case_ids[:NUM_WORKERS]}
+        pending_cases = set([case_id for case_id in good_case_ids[NUM_WORKERS:]])
         # Submit remaining cases as workers become available.  We do not
         # submit all cases immediately because we wish to have the
         # option of ending the analysis early if a case ends in error
@@ -178,44 +186,42 @@ def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
         while pending_cases:
             future = next(as_completed(futures))
             case_id = futures.pop(future)
-            pth_feb = cases["path"].loc[case_id]
+            pth_feb = cases.loc[case_id, "path"]
             return_code = future.result()
             # print(f"Popped case {case_id} from futures")
             # Log case details
             if return_code == 0:
-                run_status[case_id] = "completed"
+                cases.loc[case_id, "status"] = "run complete"
             else:
-                run_status[case_id] = "error"
+                cases.loc[case_id, "status"] = "run error"
             # Check if we should continue submitting cases
-            if on_febio_error == "stop" and return_code != 0:
-                print(f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_febio_error` = {on_febio_error}, spamneggs will finish any currently running cases, then stop.")
+            if on_case_error == "stop" and return_code != 0:
+                print(f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop.")
                 break
             # Submit next case
             next_case = pending_cases.pop()
             # print(f"Submitting case {next_case}")
             futures.update({pool.submit(run_case,
-                                        analysis.directory / cases["path"].loc[next_case]):
+                                        analysis.directory / cases.loc[next_case, "path"]):
                             next_case})
         # Finish processing all running cases.
         for future in as_completed(futures):
             case_id = futures[future]
             return_code = future.result()
             if return_code == 0:
-                run_status[case_id] = "completed"
+                cases.loc[case_id, "status"] = "run complete"
             else:
-                run_status[case_id] = "error"
-    cases["status"] = run_status
-    cases["status"] = cases["status"].astype("object")
-    # ^ in case empty, force correct type
+                cases.loc[case_id, "status"] = "run error"
     cases.to_csv(pth_cases_table)
     # Check if error terminations prevent analysis of results
-    m_error = cases["status"] == "error"
+    m_error = np.logical_or(cases["status"] == "generation error",
+                            cases["status"] == "run error")
     if np.any(m_error):
-        if on_febio_error == "ignore":
+        if on_case_error == "ignore":
             cases = cases[np.logical_not(m_error)]
-        elif on_febio_error == "hold":
-            raise Exception(f'{np.sum(m_error)} cases terminated in an error.  Because `on_febio_error` = "{on_febio_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.')
-        elif on_febio_error == "stop":
+        elif on_case_error == "hold":
+            raise Exception(f'{np.sum(m_error)} cases had generation or simulation errors.  Because `on_case_error` = "{on_case_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.')
+        elif on_case_error == "stop":
             # Error message was printed above
             sys.exit()
     # Tabulate and plot the results
@@ -223,8 +229,9 @@ def run_sensitivity(analysis, nlevels, on_febio_error="stop"):
     plot_sensitivity(analysis)
 
 
-def gen_sensitivity_cases(analysis, nlevels):
+def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
     """Return table of cases for sensitivity analysis."""
+    _validate_on_case_error(on_case_error)
     # Check output directory
     if analysis.directory is None:
         raise ValueError("Analysis.directory is None.  gen_sensitivity_cases requries an output directory.")
@@ -250,29 +257,41 @@ def gen_sensitivity_cases(analysis, nlevels):
     tab_cases = pd.DataFrame({k: v for k, v in zip(colnames,
                                                    zip(*product(*(levels[k]
                                                                 for k in colnames))))})
+    tab_cases["status"] = ""
+    tab_cases["path"] = ""
     # Modify the parameters in the XML and write the modified XML to disk
-    feb_paths = []
     for i, row in tab_cases.iterrows():
         pvalues = {k: row[k] for k in analysis.parameters}
         case_name = f"{analysis.name}_-_case={i}"
         case = Case(analysis, pvalues, case_name,
                     sim_file=cases_dir / f"{case_name}.feb",
                     case_dir=cases_dir / case_name)
-        tree = analysis.model(case)
-        # Write the case's FEBio XML tree to disk
-        with open(case.sim_file, "wb") as f:
-            fx.write_febio_xml(tree, f)
-        feb_paths.append(case.sim_file.relative_to(analysis.directory))
+        try:
+            gen_case(analysis, case)
+        except Exception as err:
+            # If the case generation fails, log the error and deal with it
+            # according to the on_case_error argument.
+            if on_case_error == "stop":
+                raise CaseGenerationError(f"Case {i} generation failed.  Because `on_case_error` = {on_case_error}, spamneggs will now exit.")
+            elif on_case_error in ("hold", "ignore"):
+                tab_cases.loc[i, "status"] = "generation error"
+        else:
+            tab_cases.loc[i, "status"] = "generation complete"
+            tab_cases.loc[i, "path"] = case.sim_file.relative_to(analysis.directory)
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
     # conflicts.
-    tab_cases["path"] = feb_paths
-    tab_cases["path"] = tab_cases["path"].astype("object")
-    # ^ in case empty, force correct type
     pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
     tab_cases.to_csv(pth_cases, index_label="case")
     return tab_cases, pth_cases
+
+
+def gen_case(analysis, case):
+    tree = analysis.model(case)
+    # Write the case's FEBio XML tree to disk
+    with open(case.sim_file, "wb") as f:
+        fx.write_febio_xml(tree, f)
 
 
 def read_case_data(case_file):
@@ -425,7 +444,7 @@ def tabulate(analysis: Analysis):
 def plot_sensitivity(analysis):
     pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
-    cases = cases[cases["status"] == "completed"]
+    cases = cases[cases["status"] == "run complete"]
 
     # Read parameters
     #
