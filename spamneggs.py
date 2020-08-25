@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+
 # Third-party packages
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -23,8 +24,10 @@ import numpy as np
 import pandas as pd
 import psutil
 import scipy.cluster
+
 # In-house packages
 import febtools as feb
+
 # Same-package modules
 from . import febioxml as fx
 from . import colors
@@ -34,27 +37,27 @@ from .variables import *
 
 NUM_WORKERS = psutil.cpu_count(logical=False)
 
-CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap("div_blue_black_red",
-                                                  colors.diverging_bky_60_10_c30_n256)
+CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
+    "div_blue_black_red", colors.diverging_bky_60_10_c30_n256
+)
+
 
 class FEBioError(Exception):
     """Raised when an FEBio simulation terminates in an error."""
+
     pass
 
 
 class CaseGenerationError(Exception):
     """Raised when case generation terminates in an error."""
+
     pass
 
 
 class Analysis:
-
-    def __init__(self,
-                 model,
-                 parameters: list,
-                 variables: list,
-                 name=None,
-                 directory=None):
+    def __init__(
+        self, model, parameters: list, variables: list, name=None, directory=None
+    ):
         self.model = model
         self.parameters = parameters
         self.variables = variables
@@ -70,7 +73,9 @@ class Analysis:
         tree = read_xml(pth)
         e_analysis = tree.find("preprocessor[@proc='spamneggs']/analysis")
         if e_analysis is None:
-            raise ValueError(f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'.")
+            raise ValueError(
+                f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'."
+            )
         # Analysis name
         e_analysis = tree.find("preprocessor/analysis")
         if "name" in e_analysis.attrib:
@@ -94,8 +99,15 @@ class Analysis:
 
 
 class Case:
-    def __init__(self, analysis, parameters: list, name=None,
-                 sim_file=None, case_dir=None, solution=None):
+    def __init__(
+        self,
+        analysis,
+        parameters: list,
+        name=None,
+        sim_file=None,
+        case_dir=None,
+        solution=None,
+    ):
         self.analysis = analysis
         self.parameters = parameters
         self.name = name
@@ -123,6 +135,7 @@ class FEBioXMLModel:
     values specified in the Case.
 
     """
+
     def __init__(self, tree, parameters: dict):
         """Return an FEBioXMLModel instance
 
@@ -145,14 +158,13 @@ class FEBioXMLModel:
         for pname, plocs in self.parameters.items():
             for ploc in plocs:
                 e_parameter = tree.find(ploc)
-                assert(e_parameter is not None)
+                assert e_parameter is not None
                 e_parameter.text = str(case.parameters[pname])
         # Add the needed elements in <Output> to support the requested
         # variables.  We also have to update the file name attribute to match
         # this case.
         logfile_reqs, plotfile_reqs = fx.required_outputs(case.variables)
-        fx.insert_output_elem(tree, logfile_reqs, plotfile_reqs,
-                              file_stem=case.name)
+        fx.insert_output_elem(tree, logfile_reqs, plotfile_reqs, file_stem=case.name)
         return tree
 
 
@@ -160,14 +172,18 @@ def _validate_on_case_error(value):
     # Validate input
     on_case_error_options = ("stop", "hold", "ignore")
     if not value in on_case_error_options:
-        raise ValueError(f"on_case_error = {value}; allowed values are {','.join(on_case_error_options)}")
+        raise ValueError(
+            f"on_case_error = {value}; allowed values are {','.join(on_case_error_options)}"
+        )
 
 
 def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     """Run a sensitivity analysis from an analysis object."""
     _validate_on_case_error(on_case_error)
     # Create the cases
-    cases, pth_cases_table = gen_sensitivity_cases(analysis, nlevels, on_case_error=on_case_error)
+    cases, pth_cases_table = gen_sensitivity_cases(
+        analysis, nlevels, on_case_error=on_case_error
+    )
     good_case_ids = cases.index[cases["status"] == "generation complete"]
     run_case = partial(run_febio_unchecked, threads=1)
     # Potential improvement: increase OMP_NUM_THREADS for last few jobs
@@ -175,9 +191,12 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     # difference, though.
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
         # Submit the first round of cases
-        futures = {pool.submit(run_case,
-                               analysis.directory / cases.loc[case_id, "path"]): case_id
-                   for case_id in good_case_ids[:NUM_WORKERS]}
+        futures = {
+            pool.submit(
+                run_case, analysis.directory / cases.loc[case_id, "path"]
+            ): case_id
+            for case_id in good_case_ids[:NUM_WORKERS]
+        }
         pending_cases = set([case_id for case_id in good_case_ids[NUM_WORKERS:]])
         # Submit remaining cases as workers become available.  We do not
         # submit all cases immediately because we wish to have the
@@ -196,14 +215,20 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
                 cases.loc[case_id, "status"] = "run error"
             # Check if we should continue submitting cases
             if on_case_error == "stop" and return_code != 0:
-                print(f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop.")
+                print(
+                    f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop."
+                )
                 break
             # Submit next case
             next_case = pending_cases.pop()
             # print(f"Submitting case {next_case}")
-            futures.update({pool.submit(run_case,
-                                        analysis.directory / cases.loc[next_case, "path"]):
-                            next_case})
+            futures.update(
+                {
+                    pool.submit(
+                        run_case, analysis.directory / cases.loc[next_case, "path"]
+                    ): next_case
+                }
+            )
         # Finish processing all running cases.
         for future in as_completed(futures):
             case_id = futures[future]
@@ -214,13 +239,16 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
                 cases.loc[case_id, "status"] = "run error"
     cases.to_csv(pth_cases_table)
     # Check if error terminations prevent analysis of results
-    m_error = np.logical_or(cases["status"] == "generation error",
-                            cases["status"] == "run error")
+    m_error = np.logical_or(
+        cases["status"] == "generation error", cases["status"] == "run error"
+    )
     if np.any(m_error):
         if on_case_error == "ignore":
             cases = cases[np.logical_not(m_error)]
         elif on_case_error == "hold":
-            raise Exception(f'{np.sum(m_error)} cases had generation or simulation errors.  Because `on_case_error` = "{on_case_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.')
+            raise Exception(
+                f'{np.sum(m_error)} cases had generation or simulation errors.  Because `on_case_error` = "{on_case_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.'
+            )
         elif on_case_error == "stop":
             # Error message was printed above
             sys.exit()
@@ -234,7 +262,9 @@ def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
     _validate_on_case_error(on_case_error)
     # Check output directory
     if analysis.directory is None:
-        raise ValueError("Analysis.directory is None.  gen_sensitivity_cases requries an output directory.")
+        raise ValueError(
+            "Analysis.directory is None.  gen_sensitivity_cases requries an output directory."
+        )
     if not analysis.directory.exists():
         analysis.directory.mkdir()
     # Create output subdirectory for the FEBio files
@@ -253,26 +283,34 @@ def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
         elif isinstance(param, CategoricalScalar):
             levels[pname] = param.sensitivity_levels()
         else:
-            raise ValueError(f"Generating levels from a variable of type `{type(var)}` is not yet supported.")
-    tab_cases = pd.DataFrame({k: v for k, v in zip(colnames,
-                                                   zip(*product(*(levels[k]
-                                                                for k in colnames))))})
+            raise ValueError(
+                f"Generating levels from a variable of type `{type(var)}` is not yet supported."
+            )
+    tab_cases = pd.DataFrame(
+        {k: v for k, v in zip(colnames, zip(*product(*(levels[k] for k in colnames))))}
+    )
     tab_cases["status"] = ""
     tab_cases["path"] = ""
     # Modify the parameters in the XML and write the modified XML to disk
     for i, row in tab_cases.iterrows():
         pvalues = {k: row[k] for k in analysis.parameters}
         case_name = f"{analysis.name}_-_case={i}"
-        case = Case(analysis, pvalues, case_name,
-                    sim_file=cases_dir / f"{case_name}.feb",
-                    case_dir=cases_dir / case_name)
+        case = Case(
+            analysis,
+            pvalues,
+            case_name,
+            sim_file=cases_dir / f"{case_name}.feb",
+            case_dir=cases_dir / case_name,
+        )
         try:
             gen_case(analysis, case)
         except Exception as err:
             # If the case generation fails, log the error and deal with it
             # according to the on_case_error argument.
             if on_case_error == "stop":
-                raise CaseGenerationError(f"Case {i} generation failed.  Because `on_case_error` = {on_case_error}, spamneggs will now exit.")
+                raise CaseGenerationError(
+                    f"Case {i} generation failed.  Because `on_case_error` = {on_case_error}, spamneggs will now exit."
+                )
             elif on_case_error in ("hold", "ignore"):
                 tab_cases.loc[i, "status"] = "generation error"
         else:
@@ -319,8 +357,9 @@ def tabulate_case_write(case, dir_out=None):
     record, timeseries = fx.tabulate_case(case)
     with open(dir_out / f"{case.sim_file.stem}_vars.json", "w") as f:
         write_record_to_json(record, f)
-    timeseries.to_csv(dir_out / f"{case.sim_file.stem}_timeseries_vars.csv",
-                      index=False)
+    timeseries.to_csv(
+        dir_out / f"{case.sim_file.stem}_timeseries_vars.csv", index=False
+    )
     plot_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
     return record, timeseries
 
@@ -339,12 +378,14 @@ def tabulate_analysis_tsvars(analysis, cases_file):
     cases = pd.read_csv(cases_file, index_col=0)
     analysis_data = pd.DataFrame()
     for i in cases.index:
-        pth_tsvars = pth_cases.parent / "case_output" /\
-            f"{analysis.name}_-_case={i}_timeseries_vars.csv"
+        pth_tsvars = (
+            pth_cases.parent
+            / "case_output"
+            / f"{analysis.name}_-_case={i}_timeseries_vars.csv"
+        )
         case_data = pd.read_csv(pth_tsvars)
         varnames = set(case_data.columns) - set(["Time", "Step"])
-        case_data = case_data.rename({k: f"{k} [var]" for k in varnames},
-                                     axis=1)
+        case_data = case_data.rename({k: f"{k} [var]" for k in varnames}, axis=1)
         case_data["Case"] = i
         for pname in analysis.parameters:
             pcolname = f"{pname} [param]"
@@ -358,7 +399,9 @@ def run_febio_checked(pth_feb, threads=psutil.cpu_count(logical=False)):
     pth_feb = Path(pth_feb)
     proc = _run_febio(pth_feb, threads=threads)
     if proc.returncode != 0:
-        raise FEBioError(f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_feb.with_suffix('.log')}.")
+        raise FEBioError(
+            f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_feb.with_suffix('.log')}."
+        )
     return proc.returncode
 
 
@@ -386,12 +429,14 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
     # the file doesn't exist FEBio will act as if it was malformed.
     if not pth_feb.exists():
         raise ValueError(f"'{pth_feb}' does not exist or is not accessible.")
-    proc = subprocess.run(['febio', '-i', pth_feb.name],
-                          cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          env=env,
-                          text=True)
+    proc = subprocess.run(
+        ["febio", "-i", pth_feb.name],
+        cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        text=True,
+    )
     # FEBio does return an error code on "Error Termination"; I checked.
     if proc.returncode != 0:
         # If there is a file read error, we need to write the captured
@@ -408,7 +453,9 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
                     with open(pth_log, "w", encoding="utf-8") as f:
                         f.write(proc.stdout)
                 else:
-                    raise NotImplementedError(f"spamneggs failed to parse FEBio file read status '{ln}'")
+                    raise NotImplementedError(
+                        f"spamneggs failed to parse FEBio file read status '{ln}'"
+                    )
     return proc
 
 
@@ -421,14 +468,17 @@ def tabulate(analysis: Analysis):
         raise ValueError(f"No cases to tabulate in '{pth_cases}'")
     for i in cases.index:
         casename = Path(cases["path"].loc[i]).stem
-        case = Case(analysis,
-                    {p: cases[p].loc[i] for p in analysis.parameters},
-                    name=casename,
-                    sim_file=analysis.directory / cases["path"].loc[i],
-                    case_dir=analysis.directory / "cases" / casename,
-                    solution=None)
-        record, timeseries = tabulate_case_write(case, \
-            dir_out=analysis.directory / "case_output")
+        case = Case(
+            analysis,
+            {p: cases[p].loc[i] for p in analysis.parameters},
+            name=casename,
+            sim_file=analysis.directory / cases["path"].loc[i],
+            case_dir=analysis.directory / "cases" / casename,
+            solution=None,
+        )
+        record, timeseries = tabulate_case_write(
+            case, dir_out=analysis.directory / "case_output"
+        )
         ivars_table["case"].append(i)
         for p in analysis.parameters:
             k = f"{p} [param]"
@@ -437,8 +487,9 @@ def tabulate(analysis: Analysis):
             k = f"{v} [var]"
             ivars_table[k].append(record["instantaneous variables"][v]["value"])
     ivars_table = pd.DataFrame(ivars_table).set_index("case")
-    ivars_table.to_csv(analysis.directory / f"{analysis.name}_-_inst_vars.csv",
-                       index=True)
+    ivars_table.to_csv(
+        analysis.directory / f"{analysis.name}_-_inst_vars.csv", index=True
+    )
 
 
 def plot_sensitivity(analysis):
@@ -451,13 +502,11 @@ def plot_sensitivity(analysis):
     # TODO: Add a function to get the list of parameters and variables
     # for an analysis up-front.  Extract the relevant code from
     # tabulate_case.
-    param_names = [k for k in cases.columns
-                   if k not in ["case", "path", "status"]]
+    param_names = [k for k in cases.columns if k not in ["case", "path", "status"]]
     param_values = {k: cases[k] for k in param_names}
 
     # Get variable names
-    record, tab_timeseries = read_case_data(analysis.directory /
-                                            cases["path"].iloc[0])
+    record, tab_timeseries = read_case_data(analysis.directory / cases["path"].iloc[0])
     ivar_names = [nm for nm in record["instantaneous variables"]]
     tsvar_names = [nm for nm in record["time series variables"]]
 
@@ -469,65 +518,70 @@ def plot_sensitivity(analysis):
         # re-use it here instead of re-reading the analysis XML for
         # every case.  However, to do this the case generation must not
         # alter the analysis XML tree.
-        record, tab_timeseries = read_case_data(analysis.directory /
-                                                cases["path"].loc[i])
+        record, tab_timeseries = read_case_data(
+            analysis.directory / cases["path"].loc[i]
+        )
         for nm in ivar_names:
             ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
     if len(ivar_names) > 0:
-        make_sensitivity_ivar_figures(analysis, param_names, param_values,
-                                      ivar_names, ivar_values)
+        make_sensitivity_ivar_figures(
+            analysis, param_names, param_values, ivar_names, ivar_values
+        )
 
     # Plots for time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, pth_cases)
-        make_sensitivity_tsvar_figures(analysis, param_names, param_values,
-                                       tsvar_names, tsdata, cases)
+        make_sensitivity_tsvar_figures(
+            analysis, param_names, param_values, tsvar_names, tsdata, cases
+        )
 
 
-def make_sensitivity_ivar_figures(analysis, param_names, param_values,
-                                  ivar_names, ivar_values):
+def make_sensitivity_ivar_figures(
+    analysis, param_names, param_values, ivar_names, ivar_values
+):
     # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
     npanels_h = len(ivar_names) + 1
     hist_nbins = 9
-    fig, axarr = plt.subplots(npanels_h, npanels_w, sharex="col",
-                              sharey="row")
-    fig.set_size_inches(1.8*npanels_w + 1, 2*npanels_h + 1)
+    fig, axarr = plt.subplots(npanels_h, npanels_w, sharex="col", sharey="row")
+    fig.set_size_inches(1.8 * npanels_w + 1, 2 * npanels_h + 1)
     # Scatter plots
     for j, param in enumerate(param_names):
         for i, var in enumerate(ivar_names):
-            axarr[i+1, j].scatter(param_values[param], ivar_values[var])
+            axarr[i + 1, j].scatter(param_values[param], ivar_values[var])
     # Marginal distribution plots
     for j, param in enumerate(param_names):
         ax = axarr[0, j]
         ax.hist(param_values[param], bins=10)
-        ax.spines['left'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax.spines["left"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
         if j > 0:
             ax.tick_params(axis="y", left=False)
     axarr[0, 0].set_ylabel("Count")
     for i, var in enumerate(ivar_names):
-        ax = axarr[i+1, -1]
-        ax.hist(ivar_values[var], bins=hist_nbins,
-                            range=axarr[i+1, 0].get_ylim(),
-                            orientation="horizontal")
-        ax.spines['bottom'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+        ax = axarr[i + 1, -1]
+        ax.hist(
+            ivar_values[var],
+            bins=hist_nbins,
+            range=axarr[i + 1, 0].get_ylim(),
+            orientation="horizontal",
+        )
+        ax.spines["bottom"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
         if i < len(ivar_names):
             ax.tick_params(axis="x", bottom=False)
     axarr[-1, -1].set_xlabel("Count")
     axarr[0, -1].axis("off")
     # Set axis labels
     for i, var in enumerate(ivar_names):
-        axarr[i+1, 0].set_ylabel(var)
+        axarr[i + 1, 0].set_ylabel(var)
     for j, param in enumerate(param_names):
         axarr[-1, j].set_xlabel(param)
     # Save figure
     fig.tight_layout()
-    fig.savefig(analysis.directory /
-                f"{analysis.name}_-_inst_var_scatterplots.svg")
+    fig.savefig(analysis.directory / f"{analysis.name}_-_inst_var_scatterplots.svg")
     plt.close(fig)
 
     # Standalone instantaneous variable vs. parameter scatter plots
@@ -540,8 +594,10 @@ def make_sensitivity_ivar_figures(analysis, param_names, param_values,
             ax.set_ylabel(var)
             ax.set_xlabel(param)
             fig.tight_layout()
-            fig.savefig(analysis.directory /
-                        f"{analysis.name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg")
+            fig.savefig(
+                analysis.directory
+                / f"{analysis.name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg"
+            )
 
     # Instantaneous variables: Standalone variable & parameter histograms
     for data in (param_values, ivar_values):
@@ -553,12 +609,14 @@ def make_sensitivity_ivar_figures(analysis, param_names, param_values,
             ax.set_xlabel(nm)
             ax.set_ylabel("Count")
             fig.tight_layout()
-            fig.savefig(analysis.directory /
-                        f"{analysis.name}_-_distribution_-_{nm}.svg")
+            fig.savefig(
+                analysis.directory / f"{analysis.name}_-_distribution_-_{nm}.svg"
+            )
 
 
-def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
-                                   tsvar_names, tsdata, cases):
+def make_sensitivity_tsvar_figures(
+    analysis, param_names, param_values, tsvar_names, tsdata, cases
+):
     # Time series variables: line plots with parameters coded by weight & color
     #
     # TODO: Find the reference case; the one with all parameters equal
@@ -576,14 +634,13 @@ def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
         m_cen = np.logical_and(m_cen, v == cen[p])
     ind = {}
     for pname, pvalues in param_values.items():
-        cnorm = TwoSlopeNorm(vmin=min(pvalues), vcenter=cen[pname],
-                             vmax=max(pvalues))
+        cnorm = TwoSlopeNorm(vmin=min(pvalues), vcenter=cen[pname], vmax=max(pvalues))
         m_ind = np.ones(len(cases), dtype="bool")
         for p_oth in set(param_values.keys()) - set([pname]):
             m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
         for varname in tsvar_names:
             fig = Figure()
-            fig.set_size_inches((5,4))
+            fig.set_size_inches((5, 4))
             FigureCanvas(fig)
             ax = fig.add_subplot(111)
             ax.set_title(f"{varname} time series vs. {pname}")
@@ -592,22 +649,30 @@ def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
             # TODO: Plot parameter sensitivity for multiple variation
             # Plot parameter sensitivity for independent variation
             for case_id in cases.index[m_ind]:
-                record, tab_timeseries = read_case_data(analysis.directory /
-                                                        cases["path"].loc[case_id])
-                ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
-                        color=CMAP_DIVERGE(cnorm(pvalues.loc[case_id])))
+                record, tab_timeseries = read_case_data(
+                    analysis.directory / cases["path"].loc[case_id]
+                )
+                ax.plot(
+                    tab_timeseries["Time"],
+                    tab_timeseries[varname],
+                    color=CMAP_DIVERGE(cnorm(pvalues.loc[case_id])),
+                )
             # Plot central case
             case_id = cases.index[m_cen][0]
-            record, tab_timeseries = read_case_data(analysis.directory /
-                                                    cases["path"].loc[case_id])
-            ax.plot(tab_timeseries["Time"], tab_timeseries[varname],
-                    color=CMAP_DIVERGE(cnorm(cen[pname])))
+            record, tab_timeseries = read_case_data(
+                analysis.directory / cases["path"].loc[case_id]
+            )
+            ax.plot(
+                tab_timeseries["Time"],
+                tab_timeseries[varname],
+                color=CMAP_DIVERGE(cnorm(cen[pname])),
+            )
             cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE))
             cbar.set_label(pname)
             fig.tight_layout()
-            nm = "_-_".join((analysis.name,
-                             "timeseries_var_lineplot",
-                             f"{varname}_vs_{pname}.svg"))
+            nm = "_-_".join(
+                (analysis.name, "timeseries_var_lineplot", f"{varname}_vs_{pname}.svg")
+            )
             fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
     plot_tsvars_heat_map(analysis, tsdata, norm="none")
@@ -617,7 +682,6 @@ def make_sensitivity_tsvar_figures(analysis, param_names, param_values,
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
-
     def default(self, o):
         if isinstance(o, np.ndarray):
             return o.tolist()
@@ -628,8 +692,7 @@ class NDArrayJSONEncoder(json.JSONEncoder):
 
 
 def write_record_to_json(record, f):
-    json.dump(record, f, indent=2, ensure_ascii=False,
-              cls=NDArrayJSONEncoder)
+    json.dump(record, f, indent=2, ensure_ascii=False, cls=NDArrayJSONEncoder)
 
 
 def plot_case_tsvar(timeseries, varname, casename=None):
@@ -675,8 +738,7 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
     nm_xaxis = "Time"
     nms_yaxis = [nm for nm in timeseries.columns if nm != nm_xaxis]
     # Produce one large plot with all variables
-    axarr = timeseries.plot(marker=".", subplots=True, x=nm_xaxis,
-                            legend=False)
+    axarr = timeseries.plot(marker=".", subplots=True, x=nm_xaxis, legend=False)
     for nm, ax in zip(nms_yaxis, axarr):
         ax.set_ylabel(nm)
     fig = axarr[0].figure
@@ -693,8 +755,7 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
 
 
-def plot_tsvars_heat_map(analysis, tsdata, norm="none",
-                         corr_threshold=1e-6):
+def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     """Plot times series variable ∝ parameter heat maps.
 
     norm := "none", "all", "vector", or "individual".  Type of color
@@ -748,23 +809,22 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
     # Calculate widths of figure elements.  TODO: It would be better to
     # specify the /figure/ width, then calculate the necessary axes
     # widths.
-    dendro_axw = 12/72*len(params)
-    fig_llabelw = lh*fontsize_figlabel/72
+    dendro_axw = 12 / 72 * len(params)
+    fig_llabelw = lh * fontsize_figlabel / 72
     dendro_areaw = fig_llabelw + dendro_axw
-    cbar_axw = 12/72
+    cbar_axw = 12 / 72
     # ^ width of colorbar axes
-    cbar_rpad = 36/72
+    cbar_rpad = 36 / 72
     # ^ padding b/w colorbar axes and axes of /next/ heat map
-    cbar_lpad = 4/72
+    cbar_lpad = 4 / 72
     # ^ padding b/w heat map axes and its colorbar axes
     cbar_areaw = cbar_lpad + cbar_axw + cbar_rpad
-    hmap_lpad = lh*fontsize_axlabel/72
+    hmap_lpad = lh * fontsize_axlabel / 72
     hmap_axw = 4
     # ^ width of individual heat map axes object if individual color
     # scales used.  Otherwise heatmap expands to fill space.
-    hmap_subw = (hmap_lpad + hmap_axw + cbar_lpad
-                 + cbar_axw + cbar_rpad)
-    hmap_subwspace = fontsize_axlabel/72
+    hmap_subw = hmap_lpad + hmap_axw + cbar_lpad + cbar_axw + cbar_rpad
+    hmap_subwspace = fontsize_axlabel / 72
     hmap_subw = 4.5
     hmap_areaw = hmap_subw * len(varnames) + hmap_subwspace * (len(varnames) - 1)
     if norm in ("none", "all", "vector"):
@@ -777,15 +837,20 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
         rcbar_areaw = 0
         rcbar_wspace = 0
         hmap_axw = hmap_subw - hmap_lpad - cbar_areaw
-    figw = (dendro_areaw + hmap_areaw + rcbar_wspace + rcbar_areaw + rcbar_wspace)
+    figw = dendro_areaw + hmap_areaw + rcbar_wspace + rcbar_areaw + rcbar_wspace
 
     # Calculate heights of figure elements
-    fig_tlabelh = lh*fontsize_figlabel/72  # "Time series variables"
-    hmap_tlabelh = lh*fontsize_axlabel/72  # Variable names
-    hmap_blabelh = lh*fontsize_axlabel/72  # "Step"
+    fig_tlabelh = lh * fontsize_figlabel / 72  # "Time series variables"
+    hmap_tlabelh = lh * fontsize_axlabel / 72  # Variable names
+    hmap_blabelh = lh * fontsize_axlabel / 72  # "Step"
     hmap_axh = 0.75
-    hmap_vspace = (lh+0.5)*fontsize_ticklabel/72  # allocated for x tick labels
-    figh = hmap_blabelh + (hmap_vspace + hmap_axh)*len(params) + hmap_tlabelh + fig_tlabelh
+    hmap_vspace = (lh + 0.5) * fontsize_ticklabel / 72  # allocated for x tick labels
+    figh = (
+        hmap_blabelh
+        + (hmap_vspace + hmap_axh) * len(params)
+        + hmap_tlabelh
+        + fig_tlabelh
+    )
 
     fig = Figure(figsize=(figw, figh))
     FigureCanvas(fig)
@@ -793,30 +858,37 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
     # Top and bottom edges of heat map axes
     hmap_areal = fig_llabelw + dendro_axw
     # ^ left coord of heatmap area
-    hmap_areab = hmap_blabelh + 0.5*hmap_vspace
+    hmap_areab = hmap_blabelh + 0.5 * hmap_vspace
     # ^ bottom coord of heatmap area, positioned such that vertical
     # center of heatmap axes will line up with the dendrogram ticks
-    hmapaxes_b0 = hmap_areab + 0.5*hmap_vspace
-    hmapaxes_t0 = hmapaxes_b0 + (len(params) - 1)*hmap_vspace + len(params)*hmap_axh
+    hmapaxes_b0 = hmap_areab + 0.5 * hmap_vspace
+    hmapaxes_t0 = hmapaxes_b0 + (len(params) - 1) * hmap_vspace + len(params) * hmap_axh
 
     # Plot dendrogram
-    b = hmap_blabelh + 0.5*hmap_vspace
-    h = (hmap_vspace + hmap_axh)*len(params)
-    dn_ax = fig.add_axes((fig_llabelw/figw, b/figh, dendro_axw/figw, h/figh))
+    b = hmap_blabelh + 0.5 * hmap_vspace
+    h = (hmap_vspace + hmap_axh) * len(params)
+    dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
     arr = np.concatenate(sensitivity_vectors, axis=0)
     # ^ collapse across variables
     arr = arr[np.all(~np.isnan(arr), axis=1)].T
     # ^ NaN would break the vector distance calculations
     dist = scipy.spatial.distance.pdist(arr, metric="correlation")
-    links = scipy.cluster.hierarchy.linkage(dist, method="average",
-                                            metric="correlation")
-    dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax,
-                                            orientation="left")
+    links = scipy.cluster.hierarchy.linkage(
+        dist, method="average", metric="correlation"
+    )
+    dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax, orientation="left")
     dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
     dn_ax.set_ylabel("Parameters", fontsize=fontsize_figlabel)
-    dn_ax.tick_params(bottom=False, right=False, left=False, top=False,
-                      labelbottom=False, labelright=False,
-                      labelleft=False, labeltop=False)
+    dn_ax.tick_params(
+        bottom=False,
+        right=False,
+        left=False,
+        top=False,
+        labelbottom=False,
+        labelright=False,
+        labelleft=False,
+        labeltop=False,
+    )
     for spine in ["left", "right", "top", "bottom"]:
         dn_ax.spines[spine].set_visible(False)
 
@@ -839,10 +911,12 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
             # Calculate bounding box for heatmap and colorbar axes.
             # Include the left & right labels within the bounding box,
             # but exclude the top and bottom labels.
-            bbox = (hmap_areal + ivar * (hmap_subw + hmap_subwspace),
-                    hmap_areab + 0.5*hmap_vspace + irow*(hmap_vspace + hmap_axh),
-                    hmap_subw,
-                    hmap_axh)
+            bbox = (
+                hmap_areal + ivar * (hmap_subw + hmap_subwspace),
+                hmap_areab + 0.5 * hmap_vspace + irow * (hmap_vspace + hmap_axh),
+                hmap_subw,
+                hmap_axh,
+            )
 
             # Draw the heatmap
             #
@@ -851,22 +925,27 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
             w = hmap_axw
             b = hmapaxes_b0 + irow * (hmap_vspace + hmap_axh)
             h = hmap_axh
-            ax = fig.add_axes((l/figw, b/figh, w/figw, h/figh))
+            ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
             # Image
             ρ = sensitivity_vectors[ivar, :, iparam]
-            im = ax.imshow(np.atleast_2d(ρ),
-                           aspect="auto",
-                           origin="upper",
-                           interpolation="nearest",
-                           cmap=CMAP_DIVERGE, norm=cnorm,
-                           extent=(tsdata["Step"].iloc[0] - 0.5,
-                                   tsdata["Step"].iloc[-1] + 0.5,
-                                   -0.5, 0.5))
+            im = ax.imshow(
+                np.atleast_2d(ρ),
+                aspect="auto",
+                origin="upper",
+                interpolation="nearest",
+                cmap=CMAP_DIVERGE,
+                norm=cnorm,
+                extent=(
+                    tsdata["Step"].iloc[0] - 0.5,
+                    tsdata["Step"].iloc[-1] + 0.5,
+                    -0.5,
+                    0.5,
+                ),
+            )
             # Labels
             ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(integer=True))
             ax.tick_params(axis="x", labelsize=fontsize_ticklabel)
-            ax.set_ylabel(params[iparam].rstrip(" [param]"),
-                          fontsize=fontsize_axlabel)
+            ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=fontsize_axlabel)
             ax.tick_params(axis="y", left=False, labelleft=False)
             if irow == 0:
                 ax.set_xlabel("Step", fontsize=fontsize_ticklabel)
@@ -876,7 +955,9 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
             # Draw the heatmap's colorbar
             if norm == "subvector":
                 l = l + hmap_axw + cbar_lpad
-                cbar_ax = fig.add_axes((l/figw, b/figh, cbar_axw/figw, hmap_axh/figh))
+                cbar_ax = fig.add_axes(
+                    (l / figw, b / figh, cbar_axw / figw, hmap_axh / figh)
+                )
                 cbar = fig.colorbar(im, cax=cbar_ax)
                 cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
                 cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
@@ -888,7 +969,7 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
                 b = hmapaxes_b0 + irow * (hmap_vspace + hmap_axh)
                 w = cbar_axw
                 h = hmap_axh
-                ax = fig.add_axes((l/figw, b/figh, w/figw, h/figh))
+                ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
                 cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
                 cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
                 cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
@@ -901,7 +982,7 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
         b = hmapaxes_b0
         w = cbar_axw
         h = hmapaxes_t0 - hmapaxes_b0
-        ax = fig.add_axes((l/figw, b/figh, w/figw, h/figh))
+        ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
         cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
         cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator())
         cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
@@ -909,9 +990,14 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
         cbar.set_label("ρ [1]", fontsize=fontsize_ticklabel)
 
     # Add whole-plot labels
-    fig.suptitle(f"Time series variable correlations, norm = {norm}", fontsize=fontsize_figlabel)
+    fig.suptitle(
+        f"Time series variable correlations, norm = {norm}", fontsize=fontsize_figlabel
+    )
     # Write figure to disk
-    fig.savefig(analysis.directory / f"{analysis.name}_-_sensitivity_vector_heatmap_norm={norm}.svg")
+    fig.savefig(
+        analysis.directory
+        / f"{analysis.name}_-_sensitivity_vector_heatmap_norm={norm}.svg"
+    )
     #
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
@@ -921,12 +1007,22 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
     fig = Figure()
     FigureCanvas(fig)
     ax = fig.add_subplot(111)
-    im = ax.matshow(dist, cmap=cmap, norm=cnorm, origin="upper",
-                    extent=(-0.5, len(params) - 0.5,
-                            -0.5, len(params) - 0.5))
+    im = ax.matshow(
+        dist,
+        cmap=cmap,
+        norm=cnorm,
+        origin="upper",
+        extent=(-0.5, len(params) - 0.5, -0.5, len(params) - 0.5),
+    )
     for (i, j), d in np.ndenumerate(np.flipud(dist)):
-        ax.text(j, i, '{:0.2f}'.format(d), ha='center', va='center',
-                backgroundcolor=(1,1,1,0.5))
+        ax.text(
+            j,
+            i,
+            "{:0.2f}".format(d),
+            ha="center",
+            va="center",
+            backgroundcolor=(1, 1, 1, 0.5),
+        )
     cbar = fig.colorbar(im)
     cbar.set_label("Distance correlation")
     ax.set_title("Sensitivity vector distance matrix")
@@ -936,4 +1032,6 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none",
     ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     fig.tight_layout()
-    fig.savefig(analysis.directory / f"{analysis.name}_-_sensitivity_vector_distance_matrix.svg")
+    fig.savefig(
+        analysis.directory / f"{analysis.name}_-_sensitivity_vector_distance_matrix.svg"
+    )
