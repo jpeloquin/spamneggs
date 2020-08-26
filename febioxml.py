@@ -248,18 +248,16 @@ def parse_var_selector(text):
     return var_info
 
 
-def scalar_from_xml(element, nominal=None, **kwargs):
-    """Return Scalar object given an FEBio XML element."""
+def scalar_from_xml(element, **kwargs):
+    """Return Scalar distribution object from XML."""
     dist = element.find("distribution")
     if dist.attrib["type"] == "uniform":
         lb = _to_number(dist.find("lb").text)
         ub = _to_number(dist.find("ub").text)
-        if nominal is not None:
-            nominal = _to_number(nominal)
-        return UniformScalar(lb, ub, nominal=nominal, **kwargs)
+        return UniformScalar(lb, ub, **kwargs)
     elif dist.attrib["type"] == "categorical":
         levels = (e.text for e in dist.findall("levels/level"))
-        return CategoricalScalar(levels, nominal=nominal, **kwargs)
+        return CategoricalScalar(levels, **kwargs)
     else:
         raise ValueError(
             f"Distribution type '{dist.attrib['type']}' not yet supported."
@@ -375,7 +373,7 @@ def get_parameters(tree):
             nominal_value = None
         else:
             nominal_value = e_nominal.text.strip()
-        dist = scalar_from_xml(e_parameter, nominal_value)
+        dist = scalar_from_xml(e_parameter)
         parameters[name] = {"nominal": nominal_value, "distribution": dist}
     #
     # Handle in-place parameter definitions and parameter references.
@@ -396,7 +394,7 @@ def get_parameters(tree):
                 nominal_value = None
             else:
                 nominal_value = e_nominal.text.strip()
-            dist = scalar_from_xml(e_parameter, nominal_value)
+            dist = scalar_from_xml(e_parameter)
             parameters[name] = {"nominal": nominal_value, "distribution": dist}
     return parameters, parameter_locations
 

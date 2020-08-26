@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib import ticker
-from matplotlib.colors import TwoSlopeNorm
 from matplotlib.cm import ScalarMappable
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
@@ -634,7 +633,7 @@ def make_sensitivity_tsvar_figures(
         m_cen = np.logical_and(m_cen, v == cen[p])
     ind = {}
     for pname, pvalues in param_values.items():
-        cnorm = TwoSlopeNorm(vmin=min(pvalues), vcenter=cen[pname], vmax=max(pvalues))
+        cnorm = mpl.colors.Norm(vmin=min(pvalues), vmax=max(pvalues))
         m_ind = np.ones(len(cases), dtype="bool")
         for p_oth in set(param_values.keys()) - set([pname]):
             m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
