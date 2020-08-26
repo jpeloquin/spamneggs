@@ -868,8 +868,30 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     h = (hmap_vspace + hmap_axh) * len(params)
     dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
     arr = np.concatenate(sensitivity_vectors, axis=0).T
-    # ^ collapse across variables
+    # ^ first index over parameters, second over timepoints
+    # Compute correlation distance =
+    #    1 - (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) )
+    # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
+    # undefined.  Typically this will happen when u or v is all zeroes; in this
+    # case, the numerator is also zero.  For this application, it is reasonable
+    # to define 0/0 = 0.  Therefore we need to check for (u − u̅) * (v - v̅) = 0
+    # and set the correlation distance for those vector pairs to 1.
     dist = scipy.spatial.distance.pdist(arr, metric="correlation")
+    n = len(arr)
+    numerator = np.empty(n)
+    numerator[:] = np.nan  # make indexing errors more obvious
+    means = np.mean(arr, axis=1)
+    for i in range(n):
+        for j in range(i + 1, max(i, n)):
+            idx = (
+                scipy.special.comb(n, 2, exact=True)
+                - scipy.special.comb(n - i, 2, exact=True)
+                + (j - i - 1)
+            )
+            numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
+            # print(f"i = {i}; j = {j}; idx = {idx}; numerator = {numerator[idx]}")
+    dist[numerator == 0] = 1
+    # Compute the linkages
     links = scipy.cluster.hierarchy.linkage(
         dist, method="average", metric="correlation"
     )
