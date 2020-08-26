@@ -867,10 +867,8 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     b = hmap_blabelh + 0.5 * hmap_vspace
     h = (hmap_vspace + hmap_axh) * len(params)
     dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
-    arr = np.concatenate(sensitivity_vectors, axis=0)
+    arr = np.concatenate(sensitivity_vectors, axis=0).T
     # ^ collapse across variables
-    arr = arr[np.all(~np.isnan(arr), axis=1)].T
-    # ^ NaN would break the vector distance calculations
     dist = scipy.spatial.distance.pdist(arr, metric="correlation")
     links = scipy.cluster.hierarchy.linkage(
         dist, method="average", metric="correlation"
