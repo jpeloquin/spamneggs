@@ -485,10 +485,8 @@ def tabulate(analysis: Analysis):
         for v in record["instantaneous variables"]:
             k = f"{v} [var]"
             ivars_table[k].append(record["instantaneous variables"][v]["value"])
-    ivars_table = pd.DataFrame(ivars_table).set_index("case")
-    ivars_table.to_csv(
-        analysis.directory / f"{analysis.name}_-_inst_vars.csv", index=True
-    )
+    df_ivars = pd.DataFrame(ivars_table).set_index("case")
+    df_ivars.to_csv(analysis.directory / f"{analysis.name}_-_inst_vars.csv", index=True)
 
 
 def plot_sensitivity(analysis):
