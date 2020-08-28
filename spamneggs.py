@@ -124,6 +124,36 @@ class Case:
             self._solution = feb.load_model(self.sim_file)
         return self._solution
 
+    @classmethod
+    def from_values(cls, analysis, pvals: dict, name: str):
+        """Return a Case for the given parameter values"""
+        # For a sensitivity analysis or other large-scale analysis, the
+        # cases should go in analysis.directory / "cases".  But in
+        # typical interactive use that's a needless level of
+        # indirection.  Large-scale analyses should implement their
+        # directory structure by calling the initializer directly.
+        sim_file = analysis.directory / f"{name}.feb"
+        case_dir = analysis.directory / name
+        return cls(analysis, pvals, name, sim_file, case_dir)
+
+    @classmethod
+    def from_named(cls, analysis, pset: str):
+        """Return a Case for the given named parameter set"""
+        # Use the parameter set's name as the default name for the case.
+        # Don't provide options to adjust the names; it is desirable for
+        # the case to match the analysis file.  The user can always call
+        # the initializer directly.
+        pvals = {p: d[pset] for p, d in analysis.parameters.items()}
+        return cls.from_values(analysis, pvals, name=pset.replace(" ", "_"))
+
+    def write_case(self):
+        """Write the case's model to disk"""
+        if not self.sim_file.parent.exists():
+            self.sim_file.parent.mkdir(parents=True)
+        tree = self.analysis.model(self)
+        with open(self.sim_file, "wb") as f:
+            fx.write_febio_xml(tree, f)
+
 
 class FEBioXMLModel:
     """A model defined by an FEBio XML tree
