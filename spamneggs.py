@@ -101,7 +101,7 @@ class Case:
     def __init__(
         self,
         analysis,
-        parameters: list,
+        parameters: dict,
         name=None,
         sim_file=None,
         case_dir=None,
