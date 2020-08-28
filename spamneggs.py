@@ -769,9 +769,15 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
     for nm, ax in zip(nms_yaxis, axarr):
         ax.set_ylabel(nm)
     fig = axarr[0].figure
+    fig.set_size_inches((7, 1.0 + 1.25 * (len(timeseries.columns) - 1)))
     if casename is not None:
         axarr[0].set_title(casename)
-    axarr[-1].set_xlabel(nm_xaxis)
+    # Format axes
+    axarr[-1].set_xlabel(f"{nm_xaxis} [s]")  # assumed unit
+    formatter = mpl.ticker.ScalarFormatter()
+    formatter.set_powerlimits((-3, 4))
+    axarr[-1].xaxis.set_major_formatter(formatter)
+    # Write figure to disk
     fig.tight_layout()
     fig.savefig(dir_out / f"{stem}timeseries_vars.svg")
     plt.close(fig)
