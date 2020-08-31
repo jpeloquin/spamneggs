@@ -323,7 +323,7 @@ def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
     # Modify the parameters in the XML and write the modified XML to disk
     for i, row in tab_cases.iterrows():
         pvalues = {k: row[k] for k in analysis.parameters}
-        case_name = f"{analysis.name}_-_case={i}"
+        case_name = f"case={i}"
         case = Case(
             analysis,
             pvalues,
@@ -349,7 +349,7 @@ def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
     # conflicts.
-    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
+    pth_cases = analysis.directory / f"cases.csv"
     tab_cases.to_csv(pth_cases, index_label="case")
     return tab_cases, pth_cases
 
@@ -407,11 +407,7 @@ def tabulate_analysis_tsvars(analysis, cases_file):
     cases = pd.read_csv(cases_file, index_col=0)
     analysis_data = pd.DataFrame()
     for i in cases.index:
-        pth_tsvars = (
-            pth_cases.parent
-            / "case_output"
-            / f"{analysis.name}_-_case={i}_timeseries_vars.csv"
-        )
+        pth_tsvars = pth_cases.parent / "case_output" / f"case={i}_timeseries_vars.csv"
         case_data = pd.read_csv(pth_tsvars)
         varnames = set(case_data.columns) - set(["Time", "Step"])
         case_data = case_data.rename({k: f"{k} [var]" for k in varnames}, axis=1)
@@ -491,7 +487,7 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
 def tabulate(analysis: Analysis):
     """Tabulate output from an analysis."""
     ivars_table = defaultdict(list)
-    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
+    pth_cases = analysis.directory / f"cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     if len(cases) == 0:
         raise ValueError(f"No cases to tabulate in '{pth_cases}'")
@@ -516,11 +512,11 @@ def tabulate(analysis: Analysis):
             k = f"{v} [var]"
             ivars_table[k].append(record["instantaneous variables"][v]["value"])
     df_ivars = pd.DataFrame(ivars_table).set_index("case")
-    df_ivars.to_csv(analysis.directory / f"{analysis.name}_-_inst_vars.csv", index=True)
+    df_ivars.to_csv(analysis.directory / f"inst_vars.csv", index=True)
 
 
 def plot_sensitivity(analysis):
-    pth_cases = analysis.directory / f"{analysis.name}_-_cases.csv"
+    pth_cases = analysis.directory / f"cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "run complete"]
 
@@ -608,7 +604,7 @@ def make_sensitivity_ivar_figures(
         axarr[-1, j].set_xlabel(param)
     # Save figure
     fig.tight_layout()
-    fig.savefig(analysis.directory / f"{analysis.name}_-_inst_var_scatterplots.svg")
+    fig.savefig(analysis.directory / f"inst_var_scatterplots.svg")
     plt.close(fig)
 
     # Standalone instantaneous variable vs. parameter scatter plots
@@ -622,8 +618,7 @@ def make_sensitivity_ivar_figures(
             ax.set_xlabel(param)
             fig.tight_layout()
             fig.savefig(
-                analysis.directory
-                / f"{analysis.name}_-_inst_var_scatterplot_-_{var}_vs_{param}.svg"
+                analysis.directory / f"inst_var_scatterplot_-_{var}_vs_{param}.svg"
             )
 
     # Instantaneous variables: Standalone variable & parameter histograms
@@ -636,9 +631,7 @@ def make_sensitivity_ivar_figures(
             ax.set_xlabel(nm)
             ax.set_ylabel("Count")
             fig.tight_layout()
-            fig.savefig(
-                analysis.directory / f"{analysis.name}_-_distribution_-_{nm}.svg"
-            )
+            fig.savefig(analysis.directory / f"distribution_-_{nm}.svg")
 
 
 def make_sensitivity_tsvar_figures(
@@ -697,9 +690,7 @@ def make_sensitivity_tsvar_figures(
             cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE))
             cbar.set_label(pname)
             fig.tight_layout()
-            nm = "_-_".join(
-                (analysis.name, "timeseries_var_lineplot", f"{varname}_vs_{pname}.svg")
-            )
+            nm = f"timeseries_var_lineplot_-_{varname}_vs_{pname}.svg"
             fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
     plot_tsvars_heat_map(analysis, tsdata, norm="none")
@@ -1047,10 +1038,7 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
         f"Time series variable correlations, norm = {norm}", fontsize=fontsize_figlabel
     )
     # Write figure to disk
-    fig.savefig(
-        analysis.directory
-        / f"{analysis.name}_-_sensitivity_vector_heatmap_norm={norm}.svg"
-    )
+    fig.savefig(analysis.directory / f"sensitivity_vector_heatmap_norm={norm}.svg")
     #
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
@@ -1085,6 +1073,4 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     fig.tight_layout()
-    fig.savefig(
-        analysis.directory / f"{analysis.name}_-_sensitivity_vector_distance_matrix.svg"
-    )
+    fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg")
