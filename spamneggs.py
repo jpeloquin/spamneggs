@@ -55,11 +55,11 @@ class CaseGenerationError(Exception):
 
 class Analysis:
     def __init__(
-        self, model, parameters: list, variables: list, name=None, directory=None
+        self, model, parameters: dict, variables: dict, name=None, directory=None
     ):
         self.model = model
-        self.parameters = parameters
-        self.variables = variables
+        self.parameters: dict = parameters
+        self.variables: dict = variables
         self.name = name
         if directory is None:
             self.directory = Path(name).absolute()
