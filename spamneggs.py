@@ -305,7 +305,7 @@ def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
     levels = {}
     for pname, pdata in analysis.parameters.items():
         colnames.append(pname)
-        param = pdata["distribution"]
+        param = pdata.distribution
         # Calculate variable's levels
         if isinstance(param, ContinuousScalar):
             levels[pname] = param.sensitivity_levels(nlevels)

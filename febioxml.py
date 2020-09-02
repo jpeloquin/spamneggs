@@ -16,6 +16,7 @@ from febtools.select import find_closest_timestep
 from febtools.xplt import XpltData
 
 # Same-package modules
+from .core import Parameter
 from .variables import *
 
 
@@ -344,7 +345,7 @@ def strip_preprocessor_elems(tree, parameters):
     # Remove the <scalar> elements from the tree.
     for e in tree.findall(".//scalar"):
         parent = e.getparent()
-        nominal_value = parameters[e.attrib["name"]]["nominal"]
+        nominal_value = parameters[e.attrib["name"]].levels["nominal"]
         if nominal_value is None:
             raise ValueError(
                 f"Element `{tree.getelementpath(parent)}` in file `{tree.base}` has no nominal value defined."
@@ -368,13 +369,13 @@ def get_parameters(tree):
     # permitted.
     for e_parameter in tree.findall("preprocessor/analysis/parameters/scalar"):
         name = e_parameter.attrib["name"]
-        e_nominal = e_parameter.find("nominal")
+        e_nominal = e_parameter.find("level[@name='nominal']")
         if e_nominal is None:
             nominal_value = None
         else:
             nominal_value = e_nominal.text.strip()
         dist = scalar_from_xml(e_parameter)
-        parameters[name] = {"nominal": nominal_value, "distribution": dist}
+        parameters[name] = Parameter(dist, {"nominal": nominal_value})
     #
     # Handle in-place parameter definitions and parameter references.
     for e_parameter in tree.xpath("*[not(name()='preprocessor')]//scalar"):
@@ -389,13 +390,13 @@ def get_parameters(tree):
         if e_parameter.getchildren():
             # The parameter element has child elements and is therefore
             # both a parameter use and a parameter definition.
-            e_nominal = e_parameter.find("nominal")
+            e_nominal = e_parameter.find("level[@name='nominal']")
             if e_nominal is None:
                 nominal_value = None
             else:
                 nominal_value = e_nominal.text.strip()
             dist = scalar_from_xml(e_parameter)
-            parameters[name] = {"nominal": nominal_value, "distribution": dist}
+            parameters[name] = Parameter(dist, {"nominal": nominal_value})
     return parameters, parameter_locations
 
 
