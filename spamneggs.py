@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from matplotlib import ticker
 from matplotlib.cm import ScalarMappable
 from matplotlib.gridspec import GridSpec
+from matplotlib.transforms import Bbox
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
 import multiprocessing as mp
 import numpy as np
@@ -674,6 +675,7 @@ def make_sensitivity_tsvar_figures(
             # parameters at their i'th level.  Call that latter set of
             # parameter values the "fulcrum".
             axs = []
+            cbars = []
             for i in range(n):
                 # Calculate fulcrum
                 fulcrum = {p: levels[p][i] for p in other_params}
@@ -683,7 +685,6 @@ def make_sensitivity_tsvar_figures(
                     m = np.logical_and(m, cases[p] == fulcrum[p])
                 # Make the plot panel
                 ax = fig.add_subplot(gs[i // nw, i % nw])
-                axs.append(ax)
                 ax.set_title(f"Level {i+1}", fontsize=FONTSIZE_AXLABEL)
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
                 ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
@@ -701,25 +702,37 @@ def make_sensitivity_tsvar_figures(
                     )
                     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-                axh_in = (
-                    ax.get_window_extent()
-                    .transformed(fig.dpi_scale_trans.inverted())
-                    .height
-                )
                 cbar = fig.colorbar(
-                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
-                    ax=ax,
+                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE), ax=ax,
                 )
-                # TODO: Couldn't get consistent colorbar width using
-                # aspect kwarg.  I suspect that constrained_layout is
-                # changing the width after the fact.
                 cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+                # Save the objects for later
+                axs.append(ax)
+                cbars.append(cbar)
             # Link the axes
             for ax in axs[1:]:
                 axs[0].get_shared_y_axes().join(axs[0], ax)
             fig.suptitle(
                 f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
             )
+            # Make colorbar width = 12 pt.  The horizontal spacing
+            # between subplots will no longer be consistent, but this
+            # looks better than fat or skinny colorbars.  It does have
+            # the downside of slightly (a few px) breaking alignment
+            # between the colorbar and its associated subplot.
+            fig.canvas.draw()
+            for cbar in cbars:
+                old_bbox = cbar.ax.get_window_extent().transformed(
+                    fig.dpi_scale_trans.inverted()
+                )
+                new_bbox = Bbox.from_bounds(
+                    old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
+                )
+                cbar.ax.set_position(
+                    new_bbox.transformed(fig.dpi_scale_trans).transformed(
+                        fig.transFigure.inverted()
+                    )
+                )
             nm = f"timeseries_var_lineplot_-_{varname}_vs_{subject_param}.svg"
             fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
