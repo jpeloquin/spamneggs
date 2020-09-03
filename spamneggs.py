@@ -4,6 +4,7 @@ from copy import deepcopy
 from functools import partial
 from itertools import product
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -39,6 +40,9 @@ NUM_WORKERS = psutil.cpu_count(logical=False)
 CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
     "div_blue_black_red", colors.diverging_bky_60_10_c30_n256
 )
+FONTSIZE_FIGLABEL = 12
+FONTSIZE_AXLABEL = 11
+FONTSIZE_TICKLABEL = 9
 
 
 class FEBioError(Exception):
@@ -637,60 +641,81 @@ def make_sensitivity_ivar_figures(
 def make_sensitivity_tsvar_figures(
     analysis, param_names, param_values, tsvar_names, tsdata, cases
 ):
-    # Time series variables: line plots with parameters coded by weight & color
-    #
-    # TODO: Find the reference case; the one with all parameters equal
-    # to their nominal values.  This means either storing the reference
-    # case when the cases are generated or adding a function to
-    # calculate and return the nominal values for each variable parameter.
-    #
-    cen = {}
-    levels = {}
-    for p in param_values:
-        levels[p] = sorted(set(param_values[p]))
-        cen[p] = levels[p][len(levels[p]) // 2]
-    m_cen = np.ones(len(cases), dtype="bool")
-    for p, v in param_values.items():
-        m_cen = np.logical_and(m_cen, v == cen[p])
-    ind = {}
-    for pname, pvalues in param_values.items():
-        cnorm = mpl.colors.Normalize(vmin=min(pvalues), vmax=max(pvalues))
-        m_ind = np.ones(len(cases), dtype="bool")
-        for p_oth in set(param_values.keys()) - set([pname]):
-            m_ind = np.logical_and(m_ind, param_values[p_oth] == cen[p_oth])
+    """Plot sensitivity of each time series variable to each parameter
+
+    For each combination of time series variable + parameter, use a line
+    plot to show the time series variable's values for each level of the
+    subject parameter, holding all other parameters at their median
+    values.  The value of the subject parameter corresponding to each
+    line is indicated by color.
+
+    """
+    # TODO: Figure out how to plot parameter sensitivity for multiple
+    # variation (parameter interactions)
+    levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
+    for subject_param, subject_values in param_values.items():
+        other_params = [p for p in param_names if p != subject_param]
+        n = len(levels[subject_param])
+        cnorm = mpl.colors.Normalize(
+            vmin=min(levels[subject_param]), vmax=max(levels[subject_param])
+        )
+        # Make a plot for each output variable
         for varname in tsvar_names:
-            fig = Figure()
-            fig.set_size_inches((5, 4))
-            FigureCanvas(fig)
-            ax = fig.add_subplot(111)
-            ax.set_title(f"{varname} time series vs. {pname}")
-            ax.set_ylabel(varname)
-            ax.set_xlabel("Time")
-            # TODO: Plot parameter sensitivity for multiple variation
-            # Plot parameter sensitivity for independent variation
-            for case_id in cases.index[m_ind]:
-                record, tab_timeseries = read_case_data(
-                    analysis.directory / cases["path"].loc[case_id]
-                )
-                ax.plot(
-                    tab_timeseries["Time"],
-                    tab_timeseries[varname],
-                    color=CMAP_DIVERGE(cnorm(pvalues.loc[case_id])),
-                )
-            # Plot central case
-            case_id = cases.index[m_cen][0]
-            record, tab_timeseries = read_case_data(
-                analysis.directory / cases["path"].loc[case_id]
+            fig = Figure(constrained_layout=True)
+            nh = math.floor(n ** 0.5)
+            nw = math.ceil(n / nh)
+            fig.set_size_inches((3 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
+            fig.set_constrained_layout_pads(
+                wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
             )
-            ax.plot(
-                tab_timeseries["Time"],
-                tab_timeseries[varname],
-                color=CMAP_DIVERGE(cnorm(cen[pname])),
+            gs = GridSpec(nh, nw, figure=fig)
+            # For i = 1 … # levels, plot the variation in each output
+            # variable vs. the subject parameter, holding all other
+            # parameters at their i'th level.  Call that latter set of
+            # parameter values the "fulcrum".
+            for i in range(n):
+                # Calculate fulcrum
+                fulcrum = {p: levels[p][i] for p in other_params}
+                # Select the cases that belong to the fulcrum
+                m = np.ones(len(cases), dtype="bool")  # init
+                for p in other_params:
+                    m = np.logical_and(m, cases[p] == fulcrum[p])
+                # Make the plot panel
+                ax = fig.add_subplot(gs[i // nw, i % nw])
+                ax.set_title(f"Level {i+1}", fontsize=FONTSIZE_AXLABEL)
+                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                # TODO: Plot a line for each reference parameter set
+                #
+                # Plot a line for each sensitivity level of the subject parameter
+                for case_id in cases.index[m]:
+                    record, tab_timeseries = read_case_data(
+                        analysis.directory / cases.loc[case_id, "path"]
+                    )
+                    ax.plot(
+                        tab_timeseries["Time"],
+                        tab_timeseries[varname],
+                        color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
+                    )
+                    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+                    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+                axh_in = (
+                    ax.get_window_extent()
+                    .transformed(fig.dpi_scale_trans.inverted())
+                    .height
+                )
+                cbar = fig.colorbar(
+                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
+                    ax=ax,
+                )
+                # TODO: Couldn't get consistent colorbar width using
+                # aspect kwarg.  I suspect that constrained_layout is
+                # changing the width after the fact.
+                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+            fig.suptitle(
+                f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
             )
-            cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE))
-            cbar.set_label(pname)
-            fig.tight_layout()
-            nm = f"timeseries_var_lineplot_-_{varname}_vs_{pname}.svg"
+            nm = f"timeseries_var_lineplot_-_{varname}_vs_{subject_param}.svg"
             fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
     plot_tsvars_heat_map(analysis, tsdata, norm="none")
@@ -825,16 +850,13 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
                 sensitivity_vectors[vi][i][pi] = ρ
 
     # Plot the heatmap
-    fontsize_axlabel = 11
-    fontsize_figlabel = 12
-    fontsize_ticklabel = 9
     lh = 1.5  # multiple of font size to use for label height
 
     # Calculate widths of figure elements.  TODO: It would be better to
     # specify the /figure/ width, then calculate the necessary axes
     # widths.
     dendro_axw = 12 / 72 * len(params)
-    fig_llabelw = lh * fontsize_figlabel / 72
+    fig_llabelw = lh * FONTSIZE_FIGLABEL / 72
     dendro_areaw = fig_llabelw + dendro_axw
     cbar_axw = 12 / 72
     # ^ width of colorbar axes
@@ -843,12 +865,12 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     cbar_lpad = 4 / 72
     # ^ padding b/w heat map axes and its colorbar axes
     cbar_areaw = cbar_lpad + cbar_axw + cbar_rpad
-    hmap_lpad = lh * fontsize_axlabel / 72
+    hmap_lpad = lh * FONTSIZE_AXLABEL / 72
     hmap_axw = 4
     # ^ width of individual heat map axes object if individual color
     # scales used.  Otherwise heatmap expands to fill space.
     hmap_subw = hmap_lpad + hmap_axw + cbar_lpad + cbar_axw + cbar_rpad
-    hmap_subwspace = fontsize_axlabel / 72
+    hmap_subwspace = FONTSIZE_AXLABEL / 72
     hmap_subw = 4.5
     hmap_areaw = hmap_subw * len(varnames) + hmap_subwspace * (len(varnames) - 1)
     if norm in ("none", "all", "vector"):
@@ -864,11 +886,11 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     figw = dendro_areaw + hmap_areaw + rcbar_wspace + rcbar_areaw + rcbar_wspace
 
     # Calculate heights of figure elements
-    fig_tlabelh = lh * fontsize_figlabel / 72  # "Time series variables"
-    hmap_tlabelh = lh * fontsize_axlabel / 72  # Variable names
-    hmap_blabelh = lh * fontsize_axlabel / 72  # "Step"
+    fig_tlabelh = lh * FONTSIZE_FIGLABEL / 72  # "Time series variables"
+    hmap_tlabelh = lh * FONTSIZE_AXLABEL / 72  # Variable names
+    hmap_blabelh = lh * FONTSIZE_AXLABEL / 72  # "Step"
     hmap_axh = 0.75
-    hmap_vspace = (lh + 0.5) * fontsize_ticklabel / 72  # allocated for x tick labels
+    hmap_vspace = (lh + 0.5) * FONTSIZE_TICKLABEL / 72  # allocated for x tick labels
     figh = (
         hmap_blabelh
         + (hmap_vspace + hmap_axh) * len(params)
@@ -922,7 +944,7 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     )
     dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax, orientation="left")
     dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
-    dn_ax.set_ylabel("Parameters", fontsize=fontsize_figlabel)
+    dn_ax.set_ylabel("Parameters", fontsize=FONTSIZE_FIGLABEL)
     dn_ax.tick_params(
         bottom=False,
         right=False,
@@ -988,13 +1010,13 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
             )
             # Labels
             ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(integer=True))
-            ax.tick_params(axis="x", labelsize=fontsize_ticklabel)
-            ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=fontsize_axlabel)
+            ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+            ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=FONTSIZE_AXLABEL)
             ax.tick_params(axis="y", left=False, labelleft=False)
             if irow == 0:
-                ax.set_xlabel("Step", fontsize=fontsize_ticklabel)
+                ax.set_xlabel("Step", fontsize=FONTSIZE_TICKLABEL)
             if irow == len(params) - 1:
-                ax.set_title(varname.rstrip(" [var]"), fontsize=fontsize_figlabel)
+                ax.set_title(varname.rstrip(" [var]"), fontsize=FONTSIZE_FIGLABEL)
 
             # Draw the heatmap's colorbar
             if norm == "subvector":
@@ -1005,8 +1027,8 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
                 cbar = fig.colorbar(im, cax=cbar_ax)
                 cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
                 cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
-                cbar.ax.tick_params(labelsize=fontsize_ticklabel)
-                cbar.set_label("ρ [1]", fontsize=fontsize_ticklabel)
+                cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+                cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
                 cbar.ax.yaxis.set_label_coords(2.7, 0.5)
             elif norm == "vector" and ivar == len(varnames) - 1:
                 l = dendro_areaw + hmap_areaw + rcbar_wspace
@@ -1017,8 +1039,8 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
                 cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
                 cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
                 cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
-                cbar.ax.tick_params(labelsize=fontsize_ticklabel)
-                cbar.set_label("ρ [1]", fontsize=fontsize_ticklabel)
+                cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+                cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
 
     # Add the whole-plot right-most colorbar, if called for
     if norm in ("none", "all"):
@@ -1030,12 +1052,12 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
         cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
         cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator())
         cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
-        cbar.ax.tick_params(labelsize=fontsize_ticklabel)
-        cbar.set_label("ρ [1]", fontsize=fontsize_ticklabel)
+        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+        cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
 
     # Add whole-plot labels
     fig.suptitle(
-        f"Time series variable correlations, norm = {norm}", fontsize=fontsize_figlabel
+        f"Time series variable correlations, norm = {norm}", fontsize=FONTSIZE_FIGLABEL
     )
     # Write figure to disk
     fig.savefig(analysis.directory / f"sensitivity_vector_heatmap_norm={norm}.svg")
