@@ -664,7 +664,7 @@ def make_sensitivity_tsvar_figures(
             fig = Figure(constrained_layout=True)
             nh = math.floor(n ** 0.5)
             nw = math.ceil(n / nh)
-            fig.set_size_inches((3 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
+            fig.set_size_inches((3.5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
             fig.set_constrained_layout_pads(
                 wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
             )
