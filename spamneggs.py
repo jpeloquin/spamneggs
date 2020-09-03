@@ -673,6 +673,7 @@ def make_sensitivity_tsvar_figures(
             # variable vs. the subject parameter, holding all other
             # parameters at their i'th level.  Call that latter set of
             # parameter values the "fulcrum".
+            axs = []
             for i in range(n):
                 # Calculate fulcrum
                 fulcrum = {p: levels[p][i] for p in other_params}
@@ -682,6 +683,7 @@ def make_sensitivity_tsvar_figures(
                     m = np.logical_and(m, cases[p] == fulcrum[p])
                 # Make the plot panel
                 ax = fig.add_subplot(gs[i // nw, i % nw])
+                axs.append(ax)
                 ax.set_title(f"Level {i+1}", fontsize=FONTSIZE_AXLABEL)
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
                 ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
@@ -712,6 +714,9 @@ def make_sensitivity_tsvar_figures(
                 # aspect kwarg.  I suspect that constrained_layout is
                 # changing the width after the fact.
                 cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+            # Link the axes
+            for ax in axs[1:]:
+                axs[0].get_shared_y_axes().join(axs[0], ax)
             fig.suptitle(
                 f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
             )
