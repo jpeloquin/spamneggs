@@ -366,12 +366,12 @@ def gen_case(analysis, case):
         fx.write_febio_xml(tree, f)
 
 
-def read_case_data(case_file):
+def read_case_data(model_path):
     """Read variables from a single case analysis."""
-    case_file = Path(case_file)
-    output_dir = case_file.parent / ".." / "case_output"
-    pth_record = output_dir / f"{case_file.stem}_vars.json"
-    pth_timeseries = output_dir / f"{case_file.stem}_timeseries_vars.csv"
+    case_file = Path(model_path)
+    output_dir = model_path.parent / ".." / "case_output"
+    pth_record = output_dir / f"{model_path.stem}_vars.json"
+    pth_timeseries = output_dir / f"{model_path.stem}_timeseries_vars.csv"
     with open(pth_record, "r") as f:
         record = json.load(f)
     timeseries = pd.read_csv(pth_timeseries, index_col=False)
