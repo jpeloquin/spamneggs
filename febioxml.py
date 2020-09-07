@@ -369,13 +369,12 @@ def get_parameters(tree):
     # permitted.
     for e_parameter in tree.findall("preprocessor/analysis/parameters/scalar"):
         name = e_parameter.attrib["name"]
-        e_nominal = e_parameter.find("level[@name='nominal']")
-        if e_nominal is None:
-            nominal_value = None
-        else:
-            nominal_value = e_nominal.text.strip()
+        levels = {
+            e_level.attrib["name"]: e_level.text.strip()
+            for e_level in e_parameter.findall("level")
+        }
         dist = scalar_from_xml(e_parameter)
-        parameters[name] = Parameter(dist, {"nominal": nominal_value})
+        parameters[name] = Parameter(dist, levels)
     #
     # Handle in-place parameter definitions and parameter references.
     for e_parameter in tree.xpath("*[not(name()='preprocessor')]//scalar"):
@@ -390,13 +389,12 @@ def get_parameters(tree):
         if e_parameter.getchildren():
             # The parameter element has child elements and is therefore
             # both a parameter use and a parameter definition.
-            e_nominal = e_parameter.find("level[@name='nominal']")
-            if e_nominal is None:
-                nominal_value = None
-            else:
-                nominal_value = e_nominal.text.strip()
+            levels = {
+                e_level.attrib["name"]: e_level.text.strip()
+                for e_level in e_parameter.findall("level")
+            }
             dist = scalar_from_xml(e_parameter)
-            parameters[name] = Parameter(dist, {"nominal": nominal_value})
+            parameters[name] = Parameter(dist, levels)
     return parameters, parameter_locations
 
 

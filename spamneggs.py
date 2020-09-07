@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Optional, Generator, Dict
 
 # Third-party packages
 import matplotlib as mpl
@@ -97,7 +98,8 @@ class Analysis:
         # Variables
         variables = fx.get_variables(tree)
         # Model
-        fx.strip_preprocessor_elems(tree, parameters)  # mutates in-place
+        fx.strip_preprocessor_elems(tree, parameters)
+        # ↑ mutates in-place
         model = FEBioXMLModel(tree, parameter_locations)
         return cls(model, parameters, variables, name, analysis_dir)
 
@@ -151,7 +153,7 @@ class Case:
         pvals = {p: d[pset] for p, d in analysis.parameters.items()}
         return cls.from_values(analysis, pvals, name=pset.replace(" ", "_"))
 
-    def write_case(self):
+    def write_model(self):
         """Write the case's model to disk"""
         if not self.sim_file.parent.exists():
             self.sim_file.parent.mkdir(parents=True)
@@ -202,7 +204,17 @@ class FEBioXMLModel:
         return tree
 
 
-def _validate_on_case_error(value):
+def _ensure_analysis_directory(analysis):
+    # Check output directory
+    if analysis.directory is None:
+        raise ValueError(
+            "Analysis.directory is None.  make_named_cases requires an output directory."
+        )
+    if not analysis.directory.exists():
+        analysis.directory.mkdir()
+
+
+def _validate_opt_on_case_error(value):
     # Validate input
     on_case_error_options = ("stop", "hold", "ignore")
     if not value in on_case_error_options:
@@ -211,159 +223,226 @@ def _validate_on_case_error(value):
         )
 
 
-def run_sensitivity(analysis, nlevels, on_case_error="stop"):
-    """Run a sensitivity analysis from an analysis object."""
-    _validate_on_case_error(on_case_error)
-    # Create the cases
-    cases, pth_cases_table = gen_sensitivity_cases(
-        analysis, nlevels, on_case_error=on_case_error
-    )
-    good_case_ids = cases.index[cases["status"] == "generation complete"]
+def cases_table(cases, status: Optional[dict] = None):
+    # TODO: Figure out same way to demarcate parameters from other
+    # metadata so there are no reserved parameter names.  For example, a
+    # user should be able to name their parameter "path" without
+    # conflicts.
+    data: Dict[str, Dict] = defaultdict(dict)
+    if status is None:
+        status = defaultdict(lambda: None)
+    for case in cases:
+        for p, v in case.parameters.items():
+            data[case.name][p] = v
+        data[case.name]["status"] = status[case.name]
+        data[case.name]["path"] = case.sim_file
+    tab = pd.DataFrame.from_dict(data, orient="index")
+    return tab
+
+
+def run_cases(analysis, cases: Generator, on_case_error="stop"):
+    """Simulate (run) cases in parallel"""
+    _validate_opt_on_case_error(on_case_error)
+    # Potential improvement: increase OMP_NUM_THREADS for last few jobs as more
+    # cores are free.  In most cases this would make little difference, though.
+    # And increase_OMP_NUM_THREADS if there are only a few cases to start with.
+    status = {}
     run_case = partial(run_febio_unchecked, threads=1)
-    # Potential improvement: increase OMP_NUM_THREADS for last few jobs
-    # as more cores are free.  In most cases this would make little
-    # difference, though.
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+        futures = {}
         # Submit the first round of cases
-        futures = {
-            pool.submit(
-                run_case, analysis.directory / cases.loc[case_id, "path"]
-            ): case_id
-            for case_id in good_case_ids[:NUM_WORKERS]
-        }
-        pending_cases = set([case_id for case_id in good_case_ids[NUM_WORKERS:]])
-        # Submit remaining cases as workers become available.  We do not
-        # submit all cases immediately because we wish to have the
-        # option of ending the analysis early if a case ends in error
-        # termination.
-        while pending_cases:
-            future = next(as_completed(futures))
-            case_id = futures.pop(future)
-            pth_feb = cases.loc[case_id, "path"]
+        for i in range(NUM_WORKERS):
+            try:
+                case = next(cases)
+            except StopIteration:
+                break
+            futures[pool.submit(run_case, case.sim_file)] = case
+        # Submit remaining cases as workers become available.  We do not submit
+        # all cases immediately because we want to be able to /easily/ end the
+        # analysis early if a case ends in error termination.
+        while True:
+            try:
+                future = next(as_completed(futures))
+            except StopIteration:
+                # A StopIteration will be raised once futures is empty.  This
+                # is the "normal" exit point for the while loop.  Other exits
+                # may be triggered by errors.
+                break
+            # Check the run outcome
+            done_case = futures.pop(future)
             return_code = future.result()
-            # print(f"Popped case {case_id} from futures")
-            # Log case details
+            # Log the run outcome
             if return_code == 0:
-                cases.loc[case_id, "status"] = "run complete"
+                status[done_case.name] = "run complete"
             else:
-                cases.loc[case_id, "status"] = "run error"
-            # Check if we should continue submitting cases
+                status[done_case.name] = "run error"
+            # Should we continue submitting cases?
             if on_case_error == "stop" and return_code != 0:
                 print(
-                    f"FEBio returned error code {return_code} while running case {case_id} ({pth_feb}); check {pth_feb.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop."
+                    f"FEBio returned error code {return_code} while running case {done_case.name} ({done_case.sim_file}); check {done_case.sim_file.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop."
                 )
+                # TODO: Try to kill the currently running cases instead of
+                # letting them run.  There's no real point in finishing the
+                # currently running cases if the analysis will stop prematurely
+                # anyway.
                 break
             # Submit next case
-            next_case = pending_cases.pop()
-            # print(f"Submitting case {next_case}")
-            futures.update(
-                {
-                    pool.submit(
-                        run_case, analysis.directory / cases.loc[next_case, "path"]
-                    ): next_case
-                }
-            )
-        # Finish processing all running cases.
-        for future in as_completed(futures):
-            case_id = futures[future]
-            return_code = future.result()
-            if return_code == 0:
-                cases.loc[case_id, "status"] = "run complete"
-            else:
-                cases.loc[case_id, "status"] = "run error"
-    cases.to_csv(pth_cases_table)
+            try:
+                next_case = next(cases)
+            except StopIteration:
+                # Continue instead of break because the loop needs to continue
+                # until all the futures are checked.
+                continue
+            futures[pool.submit(run_case, next_case.sim_file)] = next_case
+        return status
+
+
+def run_sensitivity(analysis, nlevels, on_case_error="stop"):
+    """Run a sensitivity analysis from an analysis object."""
+    _validate_opt_on_case_error(on_case_error)
+    _ensure_analysis_directory(analysis)
+
+    def replace_status(tab, status):
+        for i, s in status.items():
+            tab.loc[i, "status"] = s
+
+    def iter_cases(cases, status):
+        for case in cases:
+            if status[case.name] == "generation complete":
+                yield case
+
+    # Create the named cases
+    ncases = list_named_cases(analysis)
+    tab_ncases = cases_table(ncases)
+    pth_ncases = analysis.directory / f"named_cases.csv"
+    write_cases_table(tab_ncases, pth_ncases)
+    status_ncases = make_case_files(analysis, ncases, on_case_error=on_case_error)
+    replace_status(tab_ncases, status_ncases)
+    write_cases_table(tab_ncases, pth_ncases)
+
+    # Run the named cases
+    status = run_cases(analysis, iter_cases(ncases, status_ncases))
+    replace_status(tab_ncases, status)
+    write_cases_table(tab_ncases, pth_ncases)
+
+    # Create the sensitivity cases
+    scases = list_sensitivity_cases(analysis, nlevels)
+    # Write the table before generation so we can see the list of cases
+    # even if generation takes a long time.
+    tab_scases = cases_table(scases)
+    pth_scases = analysis.directory / f"generated_cases.csv"
+    write_cases_table(tab_scases, pth_scases)
+    status_scases = make_case_files(analysis, scases, on_case_error=on_case_error)
+    replace_status(tab_scases, status_scases)
+    write_cases_table(tab_scases, pth_scases)
+
+    # Run the sensitivity cases
+    status = run_cases(analysis, iter_cases(scases, status_scases))
+    replace_status(tab_scases, status)
+    write_cases_table(tab_scases, pth_scases)
+
     # Check if error terminations prevent analysis of results
-    m_error = np.logical_or(
-        cases["status"] == "generation error", cases["status"] == "run error"
-    )
-    if np.any(m_error):
-        if on_case_error == "ignore":
-            cases = cases[np.logical_not(m_error)]
-        elif on_case_error == "hold":
-            raise Exception(
-                f'{np.sum(m_error)} cases had generation or simulation errors.  Because `on_case_error` = "{on_case_error}", the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth_cases_table}`.  To continue, correct the error terminations and call `plot_sensitivity` separately.'
-            )
-        elif on_case_error == "stop":
-            # Error message was printed above
-            sys.exit()
+    for nm, tab, pth in (
+        ("named", tab_ncases, pth_ncases),
+        ("sensitivity", tab_scases, pth_scases),
+    ):
+        m_error = tab["status"] != "run complete"
+        if np.any(m_error):
+            if on_case_error == "ignore":
+                cases = cases[np.logical_not(m_error)]
+            elif on_case_error == "hold":
+                raise Exception(
+                    f"{np.sum(m_error)} {nm} cases had generation or simulation errors.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `plot_sensitivity` manually."
+                )
+            elif on_case_error == "stop":
+                # An error message would have been printed earlier when a model
+                # generation or run failed and the remaining generations / runs
+                # were cancelled.  So we just exit.
+                sys.exit()
     # Tabulate and plot the results
     tabulate(analysis)
     plot_sensitivity(analysis)
 
 
-def gen_sensitivity_cases(analysis, nlevels, on_case_error="stop"):
-    """Return table of cases for sensitivity analysis."""
-    _validate_on_case_error(on_case_error)
-    # Check output directory
-    if analysis.directory is None:
-        raise ValueError(
-            "Analysis.directory is None.  gen_sensitivity_cases requries an output directory."
+def list_named_cases(analysis):
+    """List an analysis' named cases."""
+    # Assemble each case's parameter values
+    casedata = defaultdict(dict)
+    for pname, param in analysis.parameters.items():
+        for cname, value in param.levels.items():
+            casedata[cname][pname] = value
+    # Create a list of cases
+    cases_dir = analysis.directory / "named_cases"
+    cases = [
+        Case(
+            analysis,
+            pvals,
+            cname,
+            sim_file=cases_dir / f"case={cname}.feb",
+            case_dir=cases_dir / f"case={cname}",
         )
-    if not analysis.directory.exists():
-        analysis.directory.mkdir()
-    # Create output subdirectory for the FEBio files
-    cases_dir = analysis.directory / "cases"
-    if not cases_dir.exists():
-        cases_dir.mkdir()
+        for cname, pvals in casedata.items()
+    ]
+    return cases
+
+
+def list_sensitivity_cases(analysis, nlevels):
+    """List cases for sensitivity analysis."""
     # Generate parameter values for each case
-    colnames = []
     levels = {}
-    for pname, pdata in analysis.parameters.items():
-        colnames.append(pname)
-        param = pdata.distribution
+    for pname, param in analysis.parameters.items():
+        dist = param.distribution
         # Calculate variable's levels
-        if isinstance(param, ContinuousScalar):
-            levels[pname] = param.sensitivity_levels(nlevels)
-        elif isinstance(param, CategoricalScalar):
-            levels[pname] = param.sensitivity_levels()
+        if isinstance(dist, ContinuousScalar):
+            levels[pname] = dist.sensitivity_levels(nlevels)
+        elif isinstance(dist, CategoricalScalar):
+            levels[pname] = dist.sensitivity_levels()
         else:
             raise ValueError(
-                f"Generating levels from a variable of type `{type(var)}` is not yet supported."
+                f"Generating levels from a variable of type `{type(dist)}` is not yet supported."
             )
-    tab_cases = pd.DataFrame(
-        {k: v for k, v in zip(colnames, zip(*product(*(levels[k] for k in colnames))))}
-    )
-    tab_cases["status"] = ""
-    tab_cases["path"] = ""
-    # Modify the parameters in the XML and write the modified XML to disk
-    for i, row in tab_cases.iterrows():
-        pvalues = {k: row[k] for k in analysis.parameters}
-        case_name = f"case={i}"
-        case = Case(
+    cases_dir = analysis.directory / "generated_cases"
+    cases = [
+        Case(
             analysis,
-            pvalues,
-            case_name,
-            sim_file=cases_dir / f"{case_name}.feb",
-            case_dir=cases_dir / case_name,
+            dict(zip(analysis.parameters, pvals)),
+            f"{i}",
+            sim_file=cases_dir / f"case={i}.feb",
+            case_dir=cases_dir / f"case={i}",
         )
+        for i, pvals in enumerate(product(*(levels[p] for p in analysis.parameters)))
+    ]
+    return cases
+
+
+def make_case_files(analysis, cases, on_case_error="stop"):
+    """Write model files for each case and return a table of cases.
+
+    Note that each case's model generation function is allowed to do
+    arbitrary computation, so generating the files write for each case
+    may do work such as running helper simulations.
+
+    """
+    _ensure_analysis_directory(analysis)
+    # Generate the case's model files
+    case_status = {case.name: None for case in cases}
+    for case in cases:
         try:
-            gen_case(analysis, case)
+            case.write_model()
         except Exception as err:
             # If the case generation fails, log the error and deal with it
             # according to the on_case_error argument.
             if on_case_error == "stop":
                 raise CaseGenerationError(
-                    f"Case {i} generation failed.  Because `on_case_error` = {on_case_error}, spamneggs will now exit."
+                    f"Case generation failed for case ID = '{case.name}' in "
+                    "directory '{case.sim_file.parent}'.  Because `on_case_error` "
+                    "= {on_case_error}, spamneggs will now exit."
                 )
             elif on_case_error in ("hold", "ignore"):
-                tab_cases.loc[i, "status"] = "generation error"
+                case_status[case.name] = "generation error"
         else:
-            tab_cases.loc[i, "status"] = "generation complete"
-            tab_cases.loc[i, "path"] = case.sim_file.relative_to(analysis.directory)
-    # TODO: Figure out same way to demarcate parameters from other
-    # metadata so there are no reserved parameter names.  For example, a
-    # user should be able to name their parameter "path" without
-    # conflicts.
-    pth_cases = analysis.directory / f"cases.csv"
-    tab_cases.to_csv(pth_cases, index_label="case")
-    return tab_cases, pth_cases
-
-
-def gen_case(analysis, case):
-    tree = analysis.model(case)
-    # Write the case's FEBio XML tree to disk
-    with open(case.sim_file, "wb") as f:
-        fx.write_febio_xml(tree, f)
+            case_status[case.name] = "generation complete"
+    return case_status
 
 
 def read_case_data(model_path):
@@ -491,37 +570,53 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
 
 def tabulate(analysis: Analysis):
     """Tabulate output from an analysis."""
-    ivars_table = defaultdict(list)
-    pth_cases = analysis.directory / f"cases.csv"
-    cases = pd.read_csv(pth_cases, index_col=0)
-    if len(cases) == 0:
-        raise ValueError(f"No cases to tabulate in '{pth_cases}'")
-    for i in cases.index:
-        casename = Path(cases["path"].loc[i]).stem
-        case = Case(
-            analysis,
-            {p: cases[p].loc[i] for p in analysis.parameters},
-            name=casename,
-            sim_file=analysis.directory / cases["path"].loc[i],
-            case_dir=analysis.directory / "cases" / casename,
-            solution=None,
+    for nm, fbase in (
+        ("named", "named"),
+        ("sensitivity", "generated"),
+    ):
+        ivars_table = defaultdict(list)
+        pth_cases = analysis.directory / f"{fbase}_cases.csv"
+        cases = pd.read_csv(pth_cases, index_col=0)
+        if len(cases) == 0:
+            raise ValueError(f"No cases to tabulate in '{pth_cases}'")
+        for i in cases.index:
+            casename = Path(cases["path"].loc[i]).stem
+            case = Case(
+                analysis,
+                {p: cases[p].loc[i] for p in analysis.parameters},
+                name=casename,
+                sim_file=analysis.directory / cases["path"].loc[i],
+                case_dir=analysis.directory / "cases" / casename,
+                solution=None,
+            )
+            record, timeseries = tabulate_case_write(
+                case, dir_out=analysis.directory / "case_output"
+            )
+            ivars_table["case"].append(i)
+            for p in analysis.parameters:
+                k = f"{p} [param]"
+                ivars_table[k].append(cases[p].loc[i])
+            for v in record["instantaneous variables"]:
+                k = f"{v} [var]"
+                ivars_table[k].append(record["instantaneous variables"][v]["value"])
+        df_ivars = pd.DataFrame(ivars_table).set_index("case")
+        df_ivars.to_csv(
+            analysis.directory / f"{fbase}_cases_-_inst_vars.csv", index=True
         )
-        record, timeseries = tabulate_case_write(
-            case, dir_out=analysis.directory / "case_output"
-        )
-        ivars_table["case"].append(i)
-        for p in analysis.parameters:
-            k = f"{p} [param]"
-            ivars_table[k].append(cases[p].loc[i])
-        for v in record["instantaneous variables"]:
-            k = f"{v} [var]"
-            ivars_table[k].append(record["instantaneous variables"][v]["value"])
-    df_ivars = pd.DataFrame(ivars_table).set_index("case")
-    df_ivars.to_csv(analysis.directory / f"inst_vars.csv", index=True)
 
 
 def plot_sensitivity(analysis):
-    pth_cases = analysis.directory / f"cases.csv"
+    # Named cases
+    pth_cases = analysis.directory / f"named_cases.csv"
+    named_cases = pd.read_csv(pth_cases, index_col=0)
+    # Named cases are manually constructed and so should converge.  If
+    # they do not, it's probably a user problem.  But you still need to
+    # see what happened when there's an error, so the plotting function
+    # should press on.
+    named_cases = named_cases[named_cases["status"] == "run complete"]
+
+    # Sensitivity cases
+    pth_cases = analysis.directory / f"generated_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
     cases = cases[cases["status"] == "run complete"]
 
@@ -560,7 +655,7 @@ def plot_sensitivity(analysis):
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, pth_cases)
         make_sensitivity_tsvar_figures(
-            analysis, param_names, param_values, tsvar_names, tsdata, cases
+            analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases
         )
 
 
@@ -640,7 +735,7 @@ def make_sensitivity_ivar_figures(
 
 
 def make_sensitivity_tsvar_figures(
-    analysis, param_names, param_values, tsvar_names, tsdata, cases
+    analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases=None
 ):
     """Plot sensitivity of each time series variable to each parameter
 
@@ -656,27 +751,49 @@ def make_sensitivity_tsvar_figures(
     levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
     for subject_param, subject_values in param_values.items():
         other_params = [p for p in param_names if p != subject_param]
-        n = len(levels[subject_param])
+        n_plots = len(levels[subject_param])
+        if named_cases is not None:
+            n_plots += 1
         cnorm = mpl.colors.Normalize(
             vmin=min(levels[subject_param]), vmax=max(levels[subject_param])
         )
         # Make a plot for each output variable
         for varname in tsvar_names:
             fig = Figure(constrained_layout=True)
-            nh = math.floor(n ** 0.5)
-            nw = math.ceil(n / nh)
+            nh = math.floor(n_plots ** 0.5)
+            nw = math.ceil(n_plots / nh)
             fig.set_size_inches((3.5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
             fig.set_constrained_layout_pads(
                 wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
             )
             gs = GridSpec(nh, nw, figure=fig)
+            axs = []
+            # Plot the named cases
+            if named_cases is not None:
+                ax = fig.add_subplot(gs[0, 0])
+                axs.append(ax)
+                ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
+                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                for i, case_id in enumerate(named_cases.index):
+                    record, tab_timeseries = read_case_data(
+                        analysis.directory / named_cases.loc[case_id, "path"]
+                    )
+                    ax.plot(
+                        tab_timeseries["Time"],
+                        tab_timeseries[varname],
+                        label=case_id,
+                        color=colors.categorical_n7[i % len(colors.categorical_n7)],
+                    )
+                ax.legend()
+            # Plot the sensitivity levels
+            #
             # For i = 1 … # levels, plot the variation in each output
             # variable vs. the subject parameter, holding all other
             # parameters at their i'th level.  Call that latter set of
             # parameter values the "fulcrum".
-            axs = []
             cbars = []
-            for i in range(n):
+            for i in range(len(levels[subject_param])):
                 # Calculate fulcrum
                 fulcrum = {p: levels[p][i] for p in other_params}
                 # Select the cases that belong to the fulcrum
@@ -684,12 +801,13 @@ def make_sensitivity_tsvar_figures(
                 for p in other_params:
                     m = np.logical_and(m, cases[p] == fulcrum[p])
                 # Make the plot panel
-                ax = fig.add_subplot(gs[i // nw, i % nw])
-                ax.set_title(f"Level {i+1}", fontsize=FONTSIZE_AXLABEL)
+                ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
+                axs.append(ax)
+                ax.set_title(
+                    f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
+                )
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
                 ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
-                # TODO: Plot a line for each reference parameter set
-                #
                 # Plot a line for each sensitivity level of the subject parameter
                 for case_id in cases.index[m]:
                     record, tab_timeseries = read_case_data(
@@ -705,10 +823,8 @@ def make_sensitivity_tsvar_figures(
                 cbar = fig.colorbar(
                     ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE), ax=ax,
                 )
-                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
-                # Save the objects for later
-                axs.append(ax)
                 cbars.append(cbar)
+                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
             # Link the axes
             for ax in axs[1:]:
                 axs[0].get_shared_y_axes().join(axs[0], ax)
@@ -750,6 +866,18 @@ class NDArrayJSONEncoder(json.JSONEncoder):
             return float(o)
         else:
             return super().default(o)
+
+
+def write_cases_table(tab, pth):
+    """Write a cases table to disk
+
+    File paths are written relative to the target directory.
+
+    """
+    tab = tab.copy()  # table might be re-used elsewhere
+    for i in tab.index:
+        tab.loc[i, "path"] = tab.loc[i, "path"].relative_to(pth.parent)
+    tab.to_csv(pth, index_label="ID")
 
 
 def write_record_to_json(record, f):

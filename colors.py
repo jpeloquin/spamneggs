@@ -1,3 +1,13 @@
+categorical_n7 = [
+    "#000000",
+    "#56B4E9",
+    "#009E73",
+    "#D0C420",
+    "#0072B2",
+    "#D55E00",
+    "#CC79A7",
+]
+
 # Peter Kovesi's CET-D6: diverging_bky_60-10_c30_n256
 # https://peterkovesi.com/projects/colourmaps/
 # https://arxiv.org/abs/1509.03700
