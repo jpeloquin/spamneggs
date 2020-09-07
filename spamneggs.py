@@ -739,121 +739,8 @@ def make_sensitivity_ivar_figures(
 def make_sensitivity_tsvar_figures(
     analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases=None
 ):
-    """Plot sensitivity of each time series variable to each parameter
-
-    For each combination of time series variable + parameter, use a line
-    plot to show the time series variable's values for each level of the
-    subject parameter, holding all other parameters at their median
-    values.  The value of the subject parameter corresponding to each
-    line is indicated by color.
-
-    """
-    # TODO: Figure out how to plot parameter sensitivity for multiple
-    # variation (parameter interactions)
-    levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
-    for subject_param, subject_values in param_values.items():
-        other_params = [p for p in param_names if p != subject_param]
-        n_plots = len(levels[subject_param])
-        if named_cases is not None:
-            n_plots += 1
-        cnorm = mpl.colors.Normalize(
-            vmin=min(levels[subject_param]), vmax=max(levels[subject_param])
-        )
-        # Make a plot for each output variable
-        for varname in tsvar_names:
-            fig = Figure(constrained_layout=True)
-            nh = math.floor(n_plots ** 0.5)
-            nw = math.ceil(n_plots / nh)
-            fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
-            fig.set_constrained_layout_pads(
-                wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
-            )
-            gs = GridSpec(nh, nw, figure=fig)
-            axs = []
-            # Plot the named cases
-            if named_cases is not None:
-                ax = fig.add_subplot(gs[0, 0])
-                axs.append(ax)
-                ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
-                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
-                for i, case_id in enumerate(named_cases.index):
-                    record, tab_timeseries = read_case_data(
-                        analysis.directory / named_cases.loc[case_id, "path"]
-                    )
-                    ax.plot(
-                        tab_timeseries["Time"],
-                        tab_timeseries[varname],
-                        label=case_id,
-                        color=colors.categorical_n7[i % len(colors.categorical_n7)],
-                    )
-                ax.legend()
-            # Plot the sensitivity levels
-            #
-            # For i = 1 … # levels, plot the variation in each output
-            # variable vs. the subject parameter, holding all other
-            # parameters at their i'th level.  Call that latter set of
-            # parameter values the "fulcrum".
-            cbars = []
-            for i in range(len(levels[subject_param])):
-                # Calculate fulcrum
-                fulcrum = {p: levels[p][i] for p in other_params}
-                # Select the cases that belong to the fulcrum
-                m = np.ones(len(cases), dtype="bool")  # init
-                for p in other_params:
-                    m = np.logical_and(m, cases[p] == fulcrum[p])
-                # Make the plot panel
-                ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
-                axs.append(ax)
-                ax.set_title(
-                    f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
-                )
-                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
-                # Plot a line for each sensitivity level of the subject parameter
-                for case_id in cases.index[m]:
-                    record, tab_timeseries = read_case_data(
-                        analysis.directory / cases.loc[case_id, "path"]
-                    )
-                    ax.plot(
-                        tab_timeseries["Time"],
-                        tab_timeseries[varname],
-                        color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
-                    )
-                    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-                    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-                cbar = fig.colorbar(
-                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE), ax=ax,
-                )
-                cbars.append(cbar)
-                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
-            # Link the axes
-            for ax in axs[1:]:
-                axs[0].get_shared_y_axes().join(axs[0], ax)
-            fig.suptitle(
-                f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
-            )
-            # Make colorbar width = 12 pt.  The horizontal spacing
-            # between subplots will no longer be consistent, but this
-            # looks better than fat or skinny colorbars.  It does have
-            # the downside of slightly (a few px) breaking alignment
-            # between the colorbar and its associated subplot.
-            fig.canvas.draw()
-            for cbar in cbars:
-                old_bbox = cbar.ax.get_window_extent().transformed(
-                    fig.dpi_scale_trans.inverted()
-                )
-                new_bbox = Bbox.from_bounds(
-                    old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
-                )
-                cbar.ax.set_position(
-                    new_bbox.transformed(fig.dpi_scale_trans).transformed(
-                        fig.transFigure.inverted()
-                    )
-                )
-            nm = f"timeseries_var_lineplot_-_{varname}_vs_{subject_param}.svg"
-            fig.savefig(analysis.directory / nm.replace(" ", "_"))
-
+    """Plot sensitivity of each time series variable to each parameter"""
+    plot_tsvars_line(analysis, param_names, param_values, tsvar_names, cases, named_cases)
     plot_tsvars_heat_map(analysis, tsdata, norm="none")
     plot_tsvars_heat_map(analysis, tsdata, norm="all")
     plot_tsvars_heat_map(analysis, tsdata, norm="vector")
@@ -1244,3 +1131,126 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     fig.tight_layout()
     fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg")
+
+
+def plot_tsvars_line(
+    analysis, param_names, param_values, tsvar_names, cases, named_cases=None
+):
+    """Plot time series variables as lines across cases
+
+    For each combination of time series variable + parameter ("subject
+    parameter"), use a line plot to show variation of the time series
+    variable between levels of the subject parameter.  The lines for the
+    levels of the subject parameter are overplotted and differentiated
+    by color.  For each i in 1 … # levels, produce one line plot, with
+    the non-subject parameters held at their i'th level.
+
+    Additionally, produce a separate plot showing the subject time
+    series variable for each named case.
+
+    """
+    # TODO: Figure out how to plot parameter sensitivity for multiple
+    # variation (parameter interactions)
+    levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
+    for subject_param, subject_values in param_values.items():
+        other_params = [p for p in param_names if p != subject_param]
+        n_plots = len(levels[subject_param])
+        if named_cases is not None:
+            n_plots += 1
+        cnorm = mpl.colors.Normalize(
+            vmin=min(levels[subject_param]), vmax=max(levels[subject_param])
+        )
+        # Make a plot for each output variable
+        for varname in tsvar_names:
+            fig = Figure(constrained_layout=True)
+            nh = math.floor(n_plots ** 0.5)
+            nw = math.ceil(n_plots / nh)
+            fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
+            fig.set_constrained_layout_pads(
+                wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
+            )
+            gs = GridSpec(nh, nw, figure=fig)
+            axs = []
+            # Plot the named cases
+            if named_cases is not None:
+                ax = fig.add_subplot(gs[0, 0])
+                axs.append(ax)
+                ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
+                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                for i, case_id in enumerate(named_cases.index):
+                    record, tab_timeseries = read_case_data(
+                        analysis.directory / named_cases.loc[case_id, "path"]
+                    )
+                    ax.plot(
+                        tab_timeseries["Time"],
+                        tab_timeseries[varname],
+                        label=case_id,
+                        color=colors.categorical_n7[i % len(colors.categorical_n7)],
+                    )
+                ax.legend()
+            # Plot the sensitivity levels
+            #
+            # For i = 1 … # levels, plot the variation in each output
+            # variable vs. the subject parameter, holding all other
+            # parameters at their i'th level.  Call that latter set of
+            # parameter values the "fulcrum".
+            cbars = []
+            for i in range(len(levels[subject_param])):
+                # Calculate fulcrum
+                fulcrum = {p: levels[p][i] for p in other_params}
+                # Select the cases that belong to the fulcrum
+                m = np.ones(len(cases), dtype="bool")  # init
+                for p in other_params:
+                    m = np.logical_and(m, cases[p] == fulcrum[p])
+                # Make the plot panel
+                ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
+                axs.append(ax)
+                ax.set_title(
+                    f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
+                )
+                ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                # Plot a line for each sensitivity level of the subject parameter
+                for case_id in cases.index[m]:
+                    record, tab_timeseries = read_case_data(
+                        analysis.directory / cases.loc[case_id, "path"]
+                    )
+                    ax.plot(
+                        tab_timeseries["Time"],
+                        tab_timeseries[varname],
+                        color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
+                    )
+                    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+                    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+                cbar = fig.colorbar(
+                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE), ax=ax,
+                )
+                cbars.append(cbar)
+                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+            # Link the axes
+            for ax in axs[1:]:
+                axs[0].get_shared_y_axes().join(axs[0], ax)
+            fig.suptitle(
+                f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
+            )
+            # Make colorbar width = 12 pt.  The horizontal spacing
+            # between subplots will no longer be consistent, but this
+            # looks better than fat or skinny colorbars.  It does have
+            # the downside of slightly (a few px) breaking alignment
+            # between the colorbar and its associated subplot.
+            fig.canvas.draw()
+            for cbar in cbars:
+                old_bbox = cbar.ax.get_window_extent().transformed(
+                    fig.dpi_scale_trans.inverted()
+                )
+                new_bbox = Bbox.from_bounds(
+                    old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
+                )
+                cbar.ax.set_position(
+                    new_bbox.transformed(fig.dpi_scale_trans).transformed(
+                        fig.transFigure.inverted()
+                    )
+                )
+            nm = f"timeseries_var_lineplot_-_{varname}_vs_{subject_param}.svg"
+            fig.savefig(analysis.directory / nm.replace(" ", "_"))
