@@ -150,7 +150,7 @@ class Case:
         # Don't provide options to adjust the names; it is desirable for
         # the case to match the analysis file.  The user can always call
         # the initializer directly.
-        pvals = {p: d[pset] for p, d in analysis.parameters.items()}
+        pvals = {p: d.levels[pset] for p, d in analysis.parameters.items()}
         return cls.from_values(analysis, pvals, name=pset.replace(" ", "_"))
 
     def write_model(self):
