@@ -200,7 +200,9 @@ class FEBioXMLModel:
         # variables.  We also have to update the file name attribute to match
         # this case.
         logfile_reqs, plotfile_reqs = fx.required_outputs(case.variables)
-        fx.insert_output_elem(tree, logfile_reqs, plotfile_reqs, file_stem=case.name)
+        fx.insert_output_elem(
+            tree, logfile_reqs, plotfile_reqs, file_stem=f"case={case.name}"
+        )
         return tree
 
 
