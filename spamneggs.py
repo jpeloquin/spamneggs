@@ -1,5 +1,4 @@
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from functools import partial
 from itertools import product
@@ -21,7 +20,7 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Bbox
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
-import multiprocessing as mp
+from multiprocessing.pool import Pool
 import numpy as np
 import pandas as pd
 import psutil
@@ -242,60 +241,33 @@ def cases_table(cases, status: Optional[dict] = None):
     return tab
 
 
-def run_cases(analysis, cases: Generator, on_case_error="stop"):
-    """Simulate (run) cases in parallel"""
+def run_case(case):
+    return_code = run_febio_unchecked(case.sim_file)
+    return return_code, case
+
+
+def run_cases(analysis, cases, on_case_error="stop"):
+    """Run cases in parallel"""
     _validate_opt_on_case_error(on_case_error)
-    # Potential improvement: increase OMP_NUM_THREADS for last few jobs as more
-    # cores are free.  In most cases this would make little difference, though.
-    # And increase_OMP_NUM_THREADS if there are only a few cases to start with.
+    # Potential improvement: increase OMP_NUM_THREADS for last few jobs
+    # as more cores are free.  And increase_OMP_NUM_THREADS if there are
+    # only a few cases to start with.  In most cases this would make
+    # little difference, though.
     status = {}
-    run_case = partial(run_febio_unchecked, threads=1)
-    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
-        futures = {}
-        # Submit the first round of cases
-        for i in range(NUM_WORKERS):
-            try:
-                case = next(cases)
-            except StopIteration:
-                break
-            futures[pool.submit(run_case, case.sim_file)] = case
-        # Submit remaining cases as workers become available.  We do not submit
-        # all cases immediately because we want to be able to /easily/ end the
-        # analysis early if a case ends in error termination.
-        while True:
-            try:
-                future = next(as_completed(futures))
-            except StopIteration:
-                # A StopIteration will be raised once futures is empty.  This
-                # is the "normal" exit point for the while loop.  Other exits
-                # may be triggered by errors.
-                break
-            # Check the run outcome
-            done_case = futures.pop(future)
-            return_code = future.result()
+    with Pool(processes=NUM_WORKERS) as pool:
+        for return_code, case in pool.imap(run_case, cases):
             # Log the run outcome
             if return_code == 0:
-                status[done_case.name] = "run complete"
+                status[case.name] = "run complete"
             else:
-                status[done_case.name] = "run error"
+                status[case.name] = "run error"
             # Should we continue submitting cases?
             if on_case_error == "stop" and return_code != 0:
                 print(
-                    f"FEBio returned error code {return_code} while running case {done_case.name} ({done_case.sim_file}); check {done_case.sim_file.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any currently running cases, then stop."
+                    f"FEBio returned error code {return_code} while running case {case.name} ({case.sim_file}); check {case.sim_file.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any previously submitted cases, then stop."
                 )
-                # TODO: Try to kill the currently running cases instead of
-                # letting them run.  There's no real point in finishing the
-                # currently running cases if the analysis will stop prematurely
-                # anyway.
+                pool.close()
                 break
-            # Submit next case
-            try:
-                next_case = next(cases)
-            except StopIteration:
-                # Continue instead of break because the loop needs to continue
-                # until all the futures are checked.
-                continue
-            futures[pool.submit(run_case, next_case.sim_file)] = next_case
         return status
 
 
