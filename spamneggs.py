@@ -43,8 +43,8 @@ CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
     "div_blue_black_red", colors.diverging_bky_60_10_c30_n256
 )
 FONTSIZE_FIGLABEL = 12
-FONTSIZE_AXLABEL = 11
-FONTSIZE_TICKLABEL = 9
+FONTSIZE_AXLABEL = 10
+FONTSIZE_TICKLABEL = 8
 
 
 class FEBioError(Exception):
@@ -740,11 +740,33 @@ def make_sensitivity_tsvar_figures(
     analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases=None
 ):
     """Plot sensitivity of each time series variable to each parameter"""
-    plot_tsvars_line(analysis, param_names, param_values, tsvar_names, cases, named_cases)
-    plot_tsvars_heat_map(analysis, tsdata, norm="none")
-    plot_tsvars_heat_map(analysis, tsdata, norm="all")
-    plot_tsvars_heat_map(analysis, tsdata, norm="vector")
-    plot_tsvars_heat_map(analysis, tsdata, norm="subvector")
+    plot_tsvars_line(
+        analysis, param_names, param_values, tsvar_names, cases, named_cases
+    )
+    # TODO: The heat map figure should probably indicate which case is
+    # plotting as the time series guide.
+    if "nominal" in named_cases.index:
+        # Plot nominal case
+        pth = analysis.directory / named_cases.loc["nominal", "path"]
+        record, ref_ts = read_case_data(pth)
+        ref_ts.columns = [
+            f"{s} [var]" if not s in ("Time", "Step") else s for s in ref_ts.columns
+        ]
+    else:
+        # Plot median generated case
+        median_levels = {
+            k: values[len(values) // 2] for k, values in param_values.items()
+        }
+        m = np.ones(len(cases), dtype="bool")
+        for param, med in median_levels.items():
+            m = np.logical_and(m, cases[param] == med)
+        assert np.sum(m) == 1
+        case_id = cases.index[m][0]
+        ref_ts = tsdata[tsdata["Case"] == case_id]
+    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none")
+    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="all")
+    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="vector")
+    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="subvector")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -839,7 +861,7 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
 
 
-def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
+def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6):
     """Plot times series variable ∝ parameter heat maps.
 
     norm := "none", "all", "vector", or "individual".  Type of color
@@ -925,13 +947,12 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     hmap_tlabelh = lh * FONTSIZE_AXLABEL / 72  # Variable names
     hmap_blabelh = lh * FONTSIZE_AXLABEL / 72  # "Step"
     hmap_axh = 0.75
-    hmap_vspace = (lh + 0.5) * FONTSIZE_TICKLABEL / 72  # allocated for x tick labels
-    figh = (
-        hmap_blabelh
-        + (hmap_vspace + hmap_axh) * len(params)
-        + hmap_tlabelh
-        + fig_tlabelh
-    )
+    # ^ height allocated for each axes
+    hmap_vspace = (lh + 0.5) * FONTSIZE_TICKLABEL / 72
+    # ^ height allocated for x-axis tick labels, per axes
+    nh = len(params) + 1
+    # ^ number of axes high; the +1 is for a time series line plot
+    figh = hmap_blabelh + (hmap_vspace + hmap_axh) * nh + hmap_tlabelh + fig_tlabelh
 
     fig = Figure(figsize=(figw, figh))
     FigureCanvas(fig)
@@ -993,6 +1014,25 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
     for spine in ["left", "right", "top", "bottom"]:
         dn_ax.spines[spine].set_visible(False)
 
+    # Draw the time series line plot
+    for ivar, varname in enumerate(varnames):
+        l = hmap_areal + ivar * (hmap_subw + hmap_subwspace) + hmap_lpad
+        w = hmap_axw
+        b = hmapaxes_b0 + len(params) * (hmap_vspace + hmap_axh)
+        h = hmap_axh
+        ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2")
+        ax.plot(ref_ts["Step"], ref_ts[varname], color="k")
+        ax.set_title(
+            varname.rpartition(" [var]")[0],
+            fontsize=FONTSIZE_FIGLABEL,
+            loc="left",
+            pad=3.0,
+        )
+        for spine in ("left", "right", "top", "bottom"):
+            ax.spines[spine].set_visible(False)
+        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+
     # Plot heatmaps
     if norm == "none":
         absmax = 1
@@ -1050,8 +1090,6 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
             ax.tick_params(axis="y", left=False, labelleft=False)
             if irow == 0:
                 ax.set_xlabel("Step", fontsize=FONTSIZE_TICKLABEL)
-            if irow == len(params) - 1:
-                ax.set_title(varname.rstrip(" [var]"), fontsize=FONTSIZE_FIGLABEL)
 
             # Draw the heatmap's colorbar
             if norm == "subvector":
@@ -1088,7 +1126,7 @@ def plot_tsvars_heat_map(analysis, tsdata, norm="none", corr_threshold=1e-6):
         cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator())
         cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
         cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-        cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
+        cbar.set_label("ρ [1]", fontsize=FONTSIZE_AXLABEL)
 
     # Add whole-plot labels
     fig.suptitle(
