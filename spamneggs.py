@@ -154,8 +154,8 @@ class Case:
 
     def write_model(self):
         """Write the case's model to disk"""
-        if not self.sim_file.parent.exists():
-            self.sim_file.parent.mkdir(parents=True)
+        self.sim_file.parent.mkdir(parents=True, exist_ok=True)
+        # ^ exist_ok is needed to make calling this function threadsafe
         tree = self.analysis.model(self)
         with open(self.sim_file, "wb") as f:
             fx.write_febio_xml(tree, f)
@@ -241,34 +241,40 @@ def cases_table(cases, status: Optional[dict] = None):
     return tab
 
 
-def run_case(case):
-    return_code = run_febio_unchecked(case.sim_file)
-    return return_code, case
-
-
-def run_cases(analysis, cases, on_case_error="stop"):
-    """Run cases in parallel"""
+def do_parallel(cases, fun, on_case_error="stop"):
     _validate_opt_on_case_error(on_case_error)
-    # Potential improvement: increase OMP_NUM_THREADS for last few jobs
-    # as more cores are free.  And increase_OMP_NUM_THREADS if there are
-    # only a few cases to start with.  In most cases this would make
-    # little difference, though.
     status = {}
     with Pool(processes=NUM_WORKERS) as pool:
-        for return_code, case in pool.imap(run_case, cases):
+        for return_code, case in pool.imap(fun, cases):
             # Log the run outcome
             if return_code == 0:
-                status[case.name] = "run complete"
+                status[case.name] = "complete"
             else:
-                status[case.name] = "run error"
+                status[case.name] = "error"
             # Should we continue submitting cases?
             if on_case_error == "stop" and return_code != 0:
+                # TODO: Figure out how to emit more specific error
+                # messages.  I think that means delegating to `run_case`
+                # and the model generation functions themselves.
                 print(
-                    f"FEBio returned error code {return_code} while running case {case.name} ({case.sim_file}); check {case.sim_file.with_suffix('.log')}.  Because `on_case_error` = {on_case_error}, spamneggs will finish any previously submitted cases, then stop."
+                    f"While working on case {case.name}, FEBio returned error code {return_code}.  Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, spamneggs will finish any previously submitted cases, then stop."
                 )
                 pool.close()
                 break
-        return status
+    return status
+
+
+def gen_case(case):
+    try:
+        case.write_model()
+    except FEBioError:
+        return 1, case
+    return 0, case
+
+
+def run_case(case):
+    return_code = run_febio_unchecked(case.sim_file)
+    return return_code, case
 
 
 def run_sensitivity(analysis, nlevels, on_case_error="stop"):
@@ -280,7 +286,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
         for i, s in status.items():
             tab.loc[i, "status"] = s
 
-    def iter_cases(cases, status):
+    def iter_generated_cases(cases, status):
         for case in cases:
             if status[case.name] == "generation complete":
                 yield case
@@ -290,13 +296,16 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     tab_ncases = cases_table(ncases)
     pth_ncases = analysis.directory / f"named_cases.csv"
     write_cases_table(tab_ncases, pth_ncases)
-    status_ncases = make_case_files(analysis, ncases, on_case_error=on_case_error)
+    status_ncases = {
+        k: "generation " + v
+        for k, v in do_parallel(ncases, gen_case, on_case_error=on_case_error).items()
+    }
     replace_status(tab_ncases, status_ncases)
     write_cases_table(tab_ncases, pth_ncases)
 
     # Run the named cases
-    status = run_cases(analysis, iter_cases(ncases, status_ncases))
-    replace_status(tab_ncases, status)
+    status = do_parallel(iter_generated_cases(ncases, status_ncases), run_case)
+    replace_status(tab_ncases, {k: "run " + v for k, v in status.items()})
     write_cases_table(tab_ncases, pth_ncases)
 
     # Create the sensitivity cases
@@ -306,12 +315,20 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     tab_scases = cases_table(scases)
     pth_scases = analysis.directory / f"generated_cases.csv"
     write_cases_table(tab_scases, pth_scases)
-    status_scases = make_case_files(analysis, scases, on_case_error=on_case_error)
+    status_scases = {
+        k: "generation " + v
+        for k, v in do_parallel(scases, gen_case, on_case_error=on_case_error).items()
+    }
     replace_status(tab_scases, status_scases)
     write_cases_table(tab_scases, pth_scases)
 
     # Run the sensitivity cases
-    status = run_cases(analysis, iter_cases(scases, status_scases))
+    status = do_parallel(
+        iter_generated_cases(scases, status_scases),
+        run_case,
+        on_case_error=on_case_error,
+    )
+    status = {k: "run " + v for k, v in status.items()}
     replace_status(tab_scases, status)
     write_cases_table(tab_scases, pth_scases)
 
@@ -397,7 +414,6 @@ def make_case_files(analysis, cases, on_case_error="stop"):
     may do work such as running helper simulations.
 
     """
-    _ensure_analysis_directory(analysis)
     # Generate the case's model files
     case_status = {case.name: None for case in cases}
     for case in cases:
