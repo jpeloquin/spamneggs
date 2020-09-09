@@ -343,7 +343,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
                 cases = cases[np.logical_not(m_error)]
             elif on_case_error == "hold":
                 raise Exception(
-                    f"{np.sum(m_error)} {nm} cases had generation or simulation errors.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `plot_sensitivity` manually."
+                    f"Of {len(tab)} sensitivity cases, {np.sum(tab['status'] == 'run complete')} cases ran successfully.  {np.sum(tab['status'] == 'generation error')} cases had generation errors, and {np.sum(tab['status'] == 'run error')} cases had run errors.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `plot_sensitivity` manually."
                 )
             elif on_case_error == "stop":
                 # An error message would have been printed earlier when a model
