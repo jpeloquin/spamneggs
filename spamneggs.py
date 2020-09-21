@@ -1137,7 +1137,10 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
 
     # Add whole-plot labels
     fig.suptitle(
-        f"Time series variable correlations, norm = {norm}", fontsize=FONTSIZE_FIGLABEL
+        f"Time series variable correlations, norm = {norm}",
+        y=1.0,
+        va="top",
+        fontsize=FONTSIZE_FIGLABEL,
     )
     # Write figure to disk
     fig.savefig(analysis.directory / f"sensitivity_vector_heatmap_norm={norm}.svg")
