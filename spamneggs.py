@@ -968,12 +968,12 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     # to define 0/0 = 0.  Therefore we need to check for (u − u̅) * (v - v̅) = 0
     # and set the correlation distance for those vector pairs to 1.
     dist = scipy.spatial.distance.pdist(arr, metric="correlation")
-    n = len(arr)
-    numerator = np.empty(n)
+    n = len(arr)  # number of variables
+    numerator = np.empty(len(dist))
     numerator[:] = np.nan  # make indexing errors more obvious
     means = np.mean(arr, axis=1)
-    for i in range(n):
-        for j in range(i + 1, max(i, n)):
+    for i in range(n):  # index of u
+        for j in range(i + 1, n):  # index of v
             idx = (
                 scipy.special.comb(n, 2, exact=True)
                 - scipy.special.comb(n - i, 2, exact=True)
