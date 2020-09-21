@@ -1111,8 +1111,20 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
         h = hmapaxes_t0 - hmapaxes_b0
         ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
         cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
-        cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator())
-        cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
+        clocator = mpl.ticker.LinearLocator()
+        cbar.ax.yaxis.set_major_locator(clocator)
+        # Touch up the center tick; it can get a value like -1e-16,
+        # which results in a label like "−0.00".  We don't want the
+        # minus sign in front of zero; it looks weird.
+        ticks = cbar.get_ticks()
+        if len(ticks) % 2 == 1:
+            ticks[len(ticks) // 2] = 0
+            cbar.set_ticks(ticks)
+        if absmax >= 0.1:
+            fmt = mpl.ticker.StrMethodFormatter("{x:.2f}")
+        else:
+            fmt = mpl.ticker.ScalarFormatter(useOffset=True)
+        cbar.ax.yaxis.set_major_formatter(fmt)
         cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
         cbar.set_label("ρ [1]", fontsize=FONTSIZE_AXLABEL)
 
