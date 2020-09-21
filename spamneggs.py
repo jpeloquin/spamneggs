@@ -1002,7 +1002,10 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     for spine in ["left", "right", "top", "bottom"]:
         dn_ax.spines[spine].set_visible(False)
 
-    # Draw the time series line plot
+    # Create common axis elements
+    tick_locator = mpl.ticker.MaxNLocator(integer=True)
+
+    # Draw the time series line plot in the first row
     for ivar, varname in enumerate(varnames):
         l = hmap_areal + ivar * (hmap_subw + hmap_subwspace) + hmap_lpad
         w = hmap_axw
@@ -1010,6 +1013,9 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
         h = hmap_axh
         ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2")
         ax.plot(ref_ts["Step"], ref_ts[varname], color="k")
+        # Set the axes limits to the min and max of the data, to match
+        # the axes limits used for the heatmap images.
+        ax.set_xlim(min(ref_ts["Step"]), max(ref_ts["Step"]))
         ax.set_title(
             varname.rpartition(" [var]")[0],
             fontsize=FONTSIZE_FIGLABEL,
@@ -1018,6 +1024,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
         )
         for spine in ("left", "right", "top", "bottom"):
             ax.spines[spine].set_visible(False)
+        ax.xaxis.set_major_locator(tick_locator)
         ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
         ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
 
@@ -1072,7 +1079,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
                 ),
             )
             # Labels
-            ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(integer=True))
+            ax.xaxis.set_major_locator(tick_locator)
             ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
             ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=FONTSIZE_AXLABEL)
             ax.tick_params(axis="y", left=False, labelleft=False)
