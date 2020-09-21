@@ -1144,15 +1144,31 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     )
     # Write figure to disk
     fig.savefig(analysis.directory / f"sensitivity_vector_heatmap_norm={norm}.svg")
-    #
+
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
     dist = scipy.spatial.distance.squareform(dist)[dn["leaves"], :][:, dn["leaves"]]
-    cmap = mpl.cm.get_cmap("cividis")
-    cnorm = mpl.colors.Normalize(vmin=0, vmax=1)
     fig = Figure()
     FigureCanvas(fig)
-    ax = fig.add_subplot(111)
+    # Set size to match number of variables
+    in_per_var = 0.8
+    pad_all = FONTSIZE_TICKLABEL / 2 / 72
+    mat_w = in_per_var * len(dist)
+    mat_h = mat_w
+    cbar_lpad = 12 / 72
+    cbar_w = 0.3
+    cbar_h = mat_h
+    cbar_rpad = (24 + FONTSIZE_AXLABEL) / 72
+    fig_w = pad_all + mat_w + cbar_lpad + cbar_w + cbar_rpad + pad_all
+    fig_h = (
+        pad_all + FONTSIZE_FIGLABEL / 72 + FONTSIZE_AXLABEL / 72 + 0.2 + mat_h + pad_all
+    )
+    fig.set_size_inches(fig_w, fig_h)
+    # Plot the matrix itself
+    pos_main_in = np.array((pad_all, pad_all, mat_w, mat_h))
+    ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
+    cmap = mpl.cm.get_cmap("cividis")
+    cnorm = mpl.colors.Normalize(vmin=0, vmax=np.max(np.abs(dist)))
     im = ax.matshow(
         dist,
         cmap=cmap,
@@ -1160,6 +1176,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
         origin="upper",
         extent=(-0.5, len(params) - 0.5, -0.5, len(params) - 0.5),
     )
+    # Write the value of each cell as text
     for (i, j), d in np.ndenumerate(np.flipud(dist)):
         ax.text(
             j,
@@ -1168,17 +1185,37 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
             ha="center",
             va="center",
             backgroundcolor=(1, 1, 1, 0.5),
+            fontsize=FONTSIZE_TICKLABEL,
         )
-    cbar = fig.colorbar(im)
-    cbar.set_label("Distance correlation")
-    ax.set_title("Sensitivity vector distance matrix")
-    ax.set_xticks([i for i in range(len(params))])
+    pos_cbar_in = np.array((pad_all + mat_w + cbar_lpad, pad_all, cbar_w, cbar_h,))
+    cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label("Distance correlation", fontsize=FONTSIZE_AXLABEL)
+    cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+    ax.set_title("Sensitivity vector distance matrix", fontsize=FONTSIZE_FIGLABEL)
+    ax.set_xticks([i for i in range(len(params))],)
     ax.set_yticks([i for i in reversed(range(len(params)))])
     # ^ reversed b/c origin="upper"
     ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
     ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
-    fig.tight_layout()
-    fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg")
+    ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
+    #
+    # Resize figure to accomodate left axis tick labels
+    ## Calculate left overflow
+    bbox_px = ax.get_tightbbox(fig.canvas.get_renderer())
+    bbox_in = fig.dpi_scale_trans.inverted().transform(bbox_px)
+    Δw_in = -bbox_in[0][0]
+    ## Resize the canvas
+    fig_w = fig_w + Δw_in
+    fig.set_size_inches(fig_w, fig_h)
+    ## Re-apply the axes sizes, which will have changed because they are
+    ## stored in figure units
+    pos_main_in[0] += Δw_in
+    pos_cbar_in[0] += Δw_in
+    ax.set_position(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
+    cax.set_position(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
+    fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg", dpi=300)
 
 
 def plot_tsvars_line(
