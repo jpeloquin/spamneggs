@@ -494,13 +494,24 @@ def tabulate_analysis_tsvars(analysis, cases_file):
 
 
 def run_febio_checked(pth_feb, threads=psutil.cpu_count(logical=False)):
-    """Run FEBio, raising exception on error."""
+    """Run FEBio, raising exception on error.
+
+    In addition, perform the following checks independent of FEBio's own
+    (mostly absent) error checking:
+
+    - In any step with PLOT_MUST_POINTS, verify that the number of time
+      points matches the number of must points.
+
+    """
     pth_feb = Path(pth_feb)
     proc = _run_febio(pth_feb, threads=threads)
     if proc.returncode != 0:
         raise FEBioError(
             f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_feb.with_suffix('.log')}."
         )
+    # Perform additional checks
+    model = feb.load_model(pth_feb)
+    feb.febio.check_must_points(model)
     return proc.returncode
 
 
