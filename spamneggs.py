@@ -28,6 +28,7 @@ import scipy.cluster
 
 # In-house packages
 import febtools as feb
+from febtools.febio import FEBioError
 
 # Same-package modules
 from . import febioxml as fx
@@ -44,12 +45,6 @@ CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
 FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
-
-
-class FEBioError(Exception):
-    """Raised when an FEBio simulation terminates in an error."""
-
-    pass
 
 
 class CaseGenerationError(Exception):
