@@ -275,6 +275,9 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     """Run a sensitivity analysis from an analysis object."""
     _validate_opt_on_case_error(on_case_error)
     _ensure_analysis_directory(analysis)
+    # Set febtools to run FEBio with only 1 thread, since we'll be
+    # running one FEBio process per core
+    feb.febio.FEBIO_THREADS = 1
 
     def replace_status(tab, status):
         for i, s in status.items():
