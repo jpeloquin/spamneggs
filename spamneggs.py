@@ -4,7 +4,6 @@ from functools import partial
 from itertools import product
 import json
 import math
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,7 +27,7 @@ import scipy.cluster
 
 # In-house packages
 import febtools as feb
-from febtools.febio import FEBioError
+from febtools.febio import FEBioError, run_febio_unchecked
 
 # Same-package modules
 from . import febioxml as fx
@@ -486,82 +485,6 @@ def tabulate_analysis_tsvars(analysis, cases_file):
             case_data[pcolname] = cases[pname].loc[i]
         analysis_data = pd.concat([analysis_data, case_data])
     return analysis_data
-
-
-def run_febio_checked(pth_feb, threads=psutil.cpu_count(logical=False)):
-    """Run FEBio, raising exception on error.
-
-    In addition, perform the following checks independent of FEBio's own
-    (mostly absent) error checking:
-
-    - In any step with PLOT_MUST_POINTS, verify that the number of time
-      points matches the number of must points.
-
-    """
-    pth_feb = Path(pth_feb)
-    proc = _run_febio(pth_feb, threads=threads)
-    if proc.returncode != 0:
-        raise FEBioError(
-            f"FEBio returned error code {proc.returncode} while running {pth_feb}; check {pth_feb.with_suffix('.log')}."
-        )
-    # Perform additional checks
-    model = feb.load_model(pth_feb)
-    feb.febio.check_must_points(model)
-    return proc.returncode
-
-
-def run_febio_unchecked(pth_feb, threads=psutil.cpu_count(logical=False)):
-    """Run FEBio and return its error code."""
-    return _run_febio(pth_feb, threads=threads).returncode
-
-
-def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
-    """Run FEBio and return the process object."""
-    # FEBio's error handling is interesting, in a bad way.  XML file
-    # read errors are only output to stdout.  If there is a read error,
-    # (1) no log file is created and (2) if an old log file exists it is
-    # not updated to reflect the file read error.  Model summary info is
-    # only output to the log file.  Time stepper info is output to both
-    # stdout and the log file, but the verbosity of the stdout output
-    # can be adjusted by the user.  We want to ensure (1) the log file
-    # always reflects the last run and (2) all relevant error messages
-    # are written to the log file.
-    pth_feb = Path(pth_feb)
-    pth_log = pth_feb.with_suffix(".log")
-    env = os.environ.copy()
-    env.update({"OMP_NUM_THREADS": f"{threads}"})
-    # Check for the existance of the FEBio XML file ourselves, since if
-    # the file doesn't exist FEBio will act as if it was malformed.
-    if not pth_feb.exists():
-        raise ValueError(f"'{pth_feb}' does not exist or is not accessible.")
-    proc = subprocess.run(
-        ["febio", "-i", pth_feb.name],
-        cwd=pth_feb.parent,  # FEBio always writes xplt to current dir
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        text=True,
-    )
-    # FEBio does return an error code on "Error Termination"; I checked.
-    if proc.returncode != 0:
-        # If there is a file read error, we need to write the captured
-        # stdout to the log file, because only it has information about
-        # the file read error.  Otherwise, we need to leave the log file
-        # in place, because it has unique information.
-        for ln in proc.stdout.splitlines():
-            if ln.startswith("Reading file"):
-                if ln.endswith("SUCCESS!"):
-                    # No file read error
-                    break
-                elif ln.endswith("FAILED!"):
-                    # File read error; send it to the log file
-                    with open(pth_log, "w", encoding="utf-8") as f:
-                        f.write(proc.stdout)
-                else:
-                    raise NotImplementedError(
-                        f"spamneggs failed to parse FEBio file read status '{ln}'"
-                    )
-    return proc
 
 
 def tabulate(analysis: Analysis):
