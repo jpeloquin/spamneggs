@@ -519,8 +519,8 @@ def _run_febio(pth_feb, threads=psutil.cpu_count(logical=False)):
     """Run FEBio and return the process object."""
     # FEBio's error handling is interesting, in a bad way.  XML file
     # read errors are only output to stdout.  If there is a read error,
-    # no log file is created and if an old log file exists, it is not
-    # updated to reflect the file read error.  Model summary info is
+    # (1) no log file is created and (2) if an old log file exists it is
+    # not updated to reflect the file read error.  Model summary info is
     # only output to the log file.  Time stepper info is output to both
     # stdout and the log file, but the verbosity of the stdout output
     # can be adjusted by the user.  We want to ensure (1) the log file
