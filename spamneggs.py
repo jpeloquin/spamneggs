@@ -1193,13 +1193,22 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
             backgroundcolor=(1, 1, 1, 0.5),
             fontsize=FONTSIZE_TICKLABEL,
         )
-    pos_cbar_in = np.array((pad_all + mat_w + cbar_lpad, pad_all, cbar_w, cbar_h,))
+    pos_cbar_in = np.array(
+        (
+            pad_all + mat_w + cbar_lpad,
+            pad_all,
+            cbar_w,
+            cbar_h,
+        )
+    )
     cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
     cbar = fig.colorbar(im, cax=cax)
     cbar.set_label("Distance correlation", fontsize=FONTSIZE_AXLABEL)
     cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
     ax.set_title("Sensitivity vector distance matrix", fontsize=FONTSIZE_FIGLABEL)
-    ax.set_xticks([i for i in range(len(params))],)
+    ax.set_xticks(
+        [i for i in range(len(params))],
+    )
     ax.set_yticks([i for i in reversed(range(len(params)))])
     # ^ reversed b/c origin="upper"
     ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
@@ -1315,7 +1324,8 @@ def plot_tsvars_line(
                     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
                 cbar = fig.colorbar(
-                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE), ax=ax,
+                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
+                    ax=ax,
                 )
                 cbars.append(cbar)
                 cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)

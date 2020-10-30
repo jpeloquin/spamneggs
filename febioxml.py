@@ -293,9 +293,7 @@ def required_outputs(variables):
 
 
 def insert_output_elem(tree, logfile_selections, plotfile_selections, file_stem):
-    """Create <Output> element in tree for variables in <analysis>.
-
-    """
+    """Create <Output> element in tree for variables in <analysis>."""
     # Find or create the <Output> element
     e_output = tree.find("Output")
     if e_output is None:
