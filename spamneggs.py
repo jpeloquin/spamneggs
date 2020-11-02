@@ -1203,7 +1203,7 @@ def plot_tsvars_line(
                 axs.append(ax)
                 ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time point", fontsize=FONTSIZE_AXLABEL)
                 ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                 ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
                 for i, case_id in enumerate(named_cases.index):
@@ -1211,7 +1211,7 @@ def plot_tsvars_line(
                         analysis.directory / named_cases.loc[case_id, "path"]
                     )
                     ax.plot(
-                        tab_timeseries["Time"],
+                        tab_timeseries["Step"],
                         tab_timeseries[varname],
                         label=case_id,
                         color=colors.categorical_n7[i % len(colors.categorical_n7)],
@@ -1238,14 +1238,14 @@ def plot_tsvars_line(
                     f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
                 )
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time point", fontsize=FONTSIZE_AXLABEL)
                 # Plot a line for each sensitivity level of the subject parameter
                 for case_id in cases.index[m]:
                     record, tab_timeseries = read_case_data(
                         analysis.directory / cases.loc[case_id, "path"]
                     )
                     ax.plot(
-                        tab_timeseries["Time"],
+                        tab_timeseries["Step"],
                         tab_timeseries[varname],
                         color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
                     )
