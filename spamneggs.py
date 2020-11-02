@@ -1016,7 +1016,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
             ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=FONTSIZE_AXLABEL)
             ax.tick_params(axis="y", left=False, labelleft=False)
             if irow == 0:
-                ax.set_xlabel("Step", fontsize=FONTSIZE_TICKLABEL)
+                ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_TICKLABEL)
 
             # Draw the heatmap's colorbar
             if norm == "subvector":
@@ -1203,7 +1203,7 @@ def plot_tsvars_line(
                 axs.append(ax)
                 ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time point", fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
                 ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                 ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
                 for i, case_id in enumerate(named_cases.index):
@@ -1225,7 +1225,6 @@ def plot_tsvars_line(
             # parameter values the "fulcrum".
             cbars = []
             for i in range(len(levels[subject_param])):
-                # Calculate fulcrum
                 fulcrum = {p: levels[p][i] for p in other_params}
                 # Select the cases that belong to the fulcrum
                 m = np.ones(len(cases), dtype="bool")  # init
@@ -1238,7 +1237,7 @@ def plot_tsvars_line(
                     f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
                 )
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
-                ax.set_xlabel("Time point", fontsize=FONTSIZE_AXLABEL)
+                ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
                 # Plot a line for each sensitivity level of the subject parameter
                 for case_id in cases.index[m]:
                     record, tab_timeseries = read_case_data(
@@ -1257,9 +1256,13 @@ def plot_tsvars_line(
                 )
                 cbars.append(cbar)
                 cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
-            # Link the axes
-            for ax in axs[1:]:
-                axs[0].get_shared_y_axes().join(axs[0], ax)
+            # Link the y axes if each has a similar range (within an
+            # order of magnitude) as the others
+            ranges = [ax.get_ylim()[1] - ax.get_ylim()[0] for ax in axs]
+            if max(ranges) / min(ranges) < 10:
+                # Link the y-axis across axes
+                for ax in axs[1:]:
+                    axs[0].get_shared_y_axes().join(axs[0], ax)
             fig.suptitle(
                 f"{varname} time series vs. {subject_param}", fontsize=FONTSIZE_FIGLABEL
             )
