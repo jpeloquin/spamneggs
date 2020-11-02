@@ -1204,6 +1204,8 @@ def plot_tsvars_line(
                 ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
                 ax.set_xlabel("Time", fontsize=FONTSIZE_AXLABEL)
+                ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+                ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
                 for i, case_id in enumerate(named_cases.index):
                     record, tab_timeseries = read_case_data(
                         analysis.directory / named_cases.loc[case_id, "path"]
