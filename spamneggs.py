@@ -892,14 +892,15 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
     arr = np.concatenate(sensitivity_vectors, axis=0).T
     # ^ first index over parameters, second over timepoints
-    # Compute correlation distance =
-    #    1 - (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) )
+    #
+    # Compute unsigned Pearson correlation distance = 1 - | ρ | where
+    # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
     # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
     # undefined.  Typically this will happen when u or v is all zeroes; in this
     # case, the numerator is also zero.  For this application, it is reasonable
     # to define 0/0 = 0.  Therefore we need to check for (u − u̅) * (v - v̅) = 0
     # and set the correlation distance for those vector pairs to 1.
-    dist = scipy.spatial.distance.pdist(arr, metric="correlation")
+    dist = (1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1))**0.5
     n = len(arr)  # number of variables
     numerator = np.empty(len(dist))
     numerator[:] = np.nan  # make indexing errors more obvious
