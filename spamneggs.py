@@ -258,12 +258,19 @@ def do_parallel(cases, fun, on_case_error="stop"):
     return status
 
 
-def gen_case(case):
+def gen_case(case, raise_exception=True):
     try:
         case.write_model()
-    except FEBioError:
-        return 1, case
+    except FEBioError as err:
+        if raise_exception:
+            raise err
+        else:
+            return 1, case
     return 0, case
+
+
+def gen_case_rcode(case):
+    return gen_case(case, raise_exception=False)
 
 
 def run_case(case):
@@ -295,7 +302,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     write_cases_table(tab_ncases, pth_ncases)
     status_ncases = {
         k: "generation " + v
-        for k, v in do_parallel(ncases, gen_case, on_case_error=on_case_error).items()
+        for k, v in do_parallel(ncases, gen_case_rcode, on_case_error=on_case_error).items()
     }
     replace_status(tab_ncases, status_ncases)
     write_cases_table(tab_ncases, pth_ncases)
@@ -314,7 +321,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     write_cases_table(tab_scases, pth_scases)
     status_scases = {
         k: "generation " + v
-        for k, v in do_parallel(scases, gen_case, on_case_error=on_case_error).items()
+        for k, v in do_parallel(scases, gen_case_rcode, on_case_error=on_case_error).items()
     }
     replace_status(tab_scases, status_scases)
     write_cases_table(tab_scases, pth_scases)
