@@ -713,8 +713,7 @@ def write_cases_table(tab, pth):
 
     """
     tab = tab.copy()  # table might be re-used elsewhere
-    for i in tab.index:
-        tab.loc[i, "path"] = tab.loc[i, "path"].relative_to(pth.parent)
+    tab["path"] = [str(p.relative_to(pth.parent)) for p in tab["path"]]
     tab.to_csv(pth, index_label="ID")
 
 
