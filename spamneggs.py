@@ -54,16 +54,31 @@ class CaseGenerationError(Exception):
 
 class Analysis:
     def __init__(
-        self, model, parameters: dict, variables: dict, name=None, directory=None
+        self,
+        model,
+        parameters: dict,
+        variables: dict,
+        name,
+        parentdir=None,
     ):
+        """Return Analysis object
+
+        name := Name of the analysis. The folder containing the analysis
+        files will be created using the analysis name, so it is a
+        required parameter.
+
+        parentdir := The directory in which the analysis folder will be
+        stored. Defaults to the current working directory.
+
+        """
         self.model = model
         self.parameters: dict = parameters
         self.variables: dict = variables
         self.name = name
-        if directory is None:
-            self.directory = Path(name).absolute()
+        if parentdir is None:
+            self.directory = Path(name).absolute() / self.name
         else:
-            self.directory = Path(directory).absolute()
+            self.directory = Path(parentdir).absolute() / self.name
 
     @classmethod
     def from_xml(cls, pth):
