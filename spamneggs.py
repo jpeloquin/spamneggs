@@ -259,14 +259,21 @@ def do_parallel(cases, fun, on_case_error="stop"):
             if return_code == 0:
                 status[case.name] = "complete"
             else:
-                status[case.name] = "error"
+                # Did FEBio complete even a partial simulation?
+                pth_xplt = case.sim_file.with_suffix(".xplt")
+                if not pth_xplt.exists():
+                    # No data was generated
+                    status[case.name] = "error: no sim"
+                else:
+                    # Some data was generated
+                    status[case.name] = "error: incomplete sim"
             # Should we continue submitting cases?
             if on_case_error == "stop" and return_code != 0:
                 # TODO: Figure out how to emit more specific error
                 # messages.  I think that means delegating to `run_case`
                 # and the model generation functions themselves.
                 print(
-                    f"While working on case {case.name}, FEBio returned error code {return_code}.  Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, spamneggs will finish any previously submitted cases, then stop."
+                    f"While working on case {case.name}, FEBio returned error code {return_code}.  Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop."
                 )
                 pool.close()
                 break
@@ -529,6 +536,11 @@ def tabulate(analysis: Analysis):
             raise ValueError(f"No cases to tabulate in '{pth_cases}'")
         for i in cases.index:
             casename = Path(cases["path"].loc[i]).stem
+            status = cases.loc[i, "status"]
+            if status == "error: no sim":
+                # Total simulation failure.  There is nothing to
+                # tabulate; don't bother trying.
+                continue
             case = Case(
                 analysis,
                 {p: cases[p].loc[i] for p in analysis.parameters},
