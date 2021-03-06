@@ -302,7 +302,9 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     write_cases_table(tab_ncases, pth_ncases)
     status_ncases = {
         k: "generation " + v
-        for k, v in do_parallel(ncases, gen_case_rcode, on_case_error=on_case_error).items()
+        for k, v in do_parallel(
+            ncases, gen_case_rcode, on_case_error=on_case_error
+        ).items()
     }
     replace_status(tab_ncases, status_ncases)
     write_cases_table(tab_ncases, pth_ncases)
@@ -321,7 +323,9 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     write_cases_table(tab_scases, pth_scases)
     status_scases = {
         k: "generation " + v
-        for k, v in do_parallel(scases, gen_case_rcode, on_case_error=on_case_error).items()
+        for k, v in do_parallel(
+            scases, gen_case_rcode, on_case_error=on_case_error
+        ).items()
     }
     replace_status(tab_scases, status_scases)
     write_cases_table(tab_scases, pth_scases)
@@ -906,7 +910,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     # case, the numerator is also zero.  For this application, it is reasonable
     # to define 0/0 = 0.  Therefore we need to check for (u − u̅) * (v - v̅) = 0
     # and set the correlation distance for those vector pairs to 1.
-    dist = (1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1))**0.5
+    dist = (1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1)) ** 0.5
     n = len(arr)  # number of variables
     numerator = np.empty(len(dist))
     numerator[:] = np.nan  # make indexing errors more obvious
