@@ -1,6 +1,5 @@
 from collections import defaultdict
 from copy import deepcopy
-from functools import partial
 from itertools import product
 import json
 import math
@@ -19,7 +18,7 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Bbox
 from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
-from multiprocessing.pool import Pool
+from pathos.pools import ProcessPool
 import numpy as np
 import pandas as pd
 import psutil
@@ -27,7 +26,12 @@ import scipy.cluster
 
 # In-house packages
 import febtools as feb
-from febtools.febio import FEBioError, run_febio_unchecked
+from febtools.febio import (
+    FEBioError,
+    NoSolutionError,
+    run_febio_unchecked,
+    run_febio_checked,
+)
 
 # Same-package modules
 from . import febioxml as fx
@@ -47,9 +51,24 @@ FONTSIZE_TICKLABEL = 8
 
 
 class CaseGenerationError(Exception):
-    """Raised when case generation terminates in an error."""
+    """Raise when case generation terminates in an error."""
 
     pass
+
+
+class Success:
+    """Return value for successful execution"""
+
+    def __str__(self):
+        return "Success"
+
+    def __eq__(self, other):
+        return other.__class__ == self.__class__
+
+    pass
+
+
+SUCCESS = Success()
 
 
 class Analysis:
@@ -224,6 +243,19 @@ def _ensure_analysis_directory(analysis):
         analysis.directory.mkdir()
 
 
+def _trap_err(fun):
+    """Wrap case-processing function to catch and return any errors"""
+
+    def wrapped(case):
+        try:
+            return fun(case)
+        except Exception as err:
+            print(f"{err.__class__.__name__}: {err}")
+            return case, err
+
+    return wrapped
+
+
 def _validate_opt_on_case_error(value):
     # Validate input
     on_case_error_options = ("stop", "hold", "ignore")
@@ -233,71 +265,51 @@ def _validate_opt_on_case_error(value):
         )
 
 
-def cases_table(cases, status: Optional[dict] = None):
+def cases_table(cases):
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
     # conflicts.
     data: Dict[str, Dict] = defaultdict(dict)
-    if status is None:
-        status = defaultdict(lambda: None)
     for case in cases:
         for p, v in case.parameters.items():
             data[case.name][p] = v
-        data[case.name]["status"] = status[case.name]
+        data[case.name]["status"] = None
         data[case.name]["path"] = case.sim_file
     tab = pd.DataFrame.from_dict(data, orient="index")
     return tab
 
 
 def do_parallel(cases, fun, on_case_error="stop"):
-    _validate_opt_on_case_error(on_case_error)
+    _validate_opt_on_case_error(on_case_error)  # TODO: Use enum
     status = {}
-    with Pool(processes=NUM_WORKERS) as pool:
-        for return_code, case in pool.imap(fun, cases):
-            # Log the run outcome
-            if return_code == 0:
-                status[case.name] = "complete"
-            else:
-                # Did FEBio complete even a partial simulation?
-                pth_xplt = case.sim_file.with_suffix(".xplt")
-                if not pth_xplt.exists():
-                    # No data was generated
-                    status[case.name] = "error: no sim"
-                else:
-                    # Some data was generated
-                    status[case.name] = "error: incomplete sim"
-            # Should we continue submitting cases?
-            if on_case_error == "stop" and return_code != 0:
-                # TODO: Figure out how to emit more specific error
-                # messages.  I think that means delegating to `run_case`
-                # and the model generation functions themselves.
-                print(
-                    f"While working on case {case.name}, FEBio returned error code {return_code}.  Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop."
-                )
-                pool.close()
-                break
+    pool = ProcessPool(nodes=NUM_WORKERS)
+    results = pool.imap(_trap_err(fun), cases)
+    for case, err in results:
+        # Log the run outcome
+        status[case.name] = err
+        # Should we continue submitting cases?
+        if isinstance(err, Exception) and on_case_error == "stop":
+            print(
+                f"While working on case {case.name}, the following error was encountered:"
+            )
+            print(err)
+            print(
+                f"Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop."
+            )
+            pool.close()
+            break
     return status
 
 
-def gen_case(case, raise_exception=True):
-    try:
-        case.write_model()
-    except FEBioError as err:
-        if raise_exception:
-            raise err
-        else:
-            return 1, case
-    return 0, case
-
-
-def gen_case_rcode(case):
-    return gen_case(case, raise_exception=False)
+def gen_case(case):
+    case.write_model()
+    return case, SUCCESS
 
 
 def run_case(case):
-    return_code = run_febio_unchecked(case.sim_file)
-    return return_code, case
+    return_code = run_febio_checked(case.sim_file)
+    return case, SUCCESS
 
 
 def run_sensitivity(analysis, nlevels, on_case_error="stop"):
@@ -308,13 +320,23 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     # running one FEBio process per core
     feb.febio.FEBIO_THREADS = 1
 
-    def replace_status(tab, status):
-        for i, s in status.items():
-            tab.loc[i, "status"] = s
+    def replace_status(tab, status, step=None):
+        if step is not None:
+            prefix = f"{step}: "
+        else:
+            prefix = ""
+        for i, err in status.items():
+            if isinstance(err, Exception):
+                # Don't include the full exception message, which would make it
+                # harder to filter the table
+                s = err.__class__.__name__
+            else:
+                s = str(err)
+            tab.loc[i, "status"] = f"{prefix}{s}"
 
-    def iter_generated_cases(cases, status):
+    def iter_generated_cases(cases, status: dict):
         for case in cases:
-            if status[case.name] == "generation complete":
+            if status[case.name] == SUCCESS:
                 yield case
 
     # Create the named cases
@@ -322,18 +344,13 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     tab_ncases = cases_table(ncases)
     pth_ncases = analysis.directory / f"named_cases.csv"
     write_cases_table(tab_ncases, pth_ncases)
-    status_ncases = {
-        k: "generation " + v
-        for k, v in do_parallel(
-            ncases, gen_case_rcode, on_case_error=on_case_error
-        ).items()
-    }
-    replace_status(tab_ncases, status_ncases)
+    status_ncases = do_parallel(ncases, gen_case, on_case_error=on_case_error)
+    replace_status(tab_ncases, status_ncases, step="Generate")
     write_cases_table(tab_ncases, pth_ncases)
 
     # Run the named cases
     status = do_parallel(iter_generated_cases(ncases, status_ncases), run_case)
-    replace_status(tab_ncases, {k: "run " + v for k, v in status.items()})
+    replace_status(tab_ncases, status, step="Run")
     write_cases_table(tab_ncases, pth_ncases)
 
     # Create the sensitivity cases
@@ -343,13 +360,8 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     tab_scases = cases_table(scases)
     pth_scases = analysis.directory / f"generated_cases.csv"
     write_cases_table(tab_scases, pth_scases)
-    status_scases = {
-        k: "generation " + v
-        for k, v in do_parallel(
-            scases, gen_case_rcode, on_case_error=on_case_error
-        ).items()
-    }
-    replace_status(tab_scases, status_scases)
+    status_scases = do_parallel(scases, gen_case, on_case_error=on_case_error)
+    replace_status(tab_scases, status_scases, step="Generate")
     write_cases_table(tab_scases, pth_scases)
 
     # Run the sensitivity cases
@@ -358,8 +370,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
         run_case,
         on_case_error=on_case_error,
     )
-    status = {k: "run " + v for k, v in status.items()}
-    replace_status(tab_scases, status)
+    replace_status(tab_scases, status, step="Run")
     write_cases_table(tab_scases, pth_scases)
 
     # Check if error terminations prevent analysis of results
@@ -367,13 +378,13 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
         ("named", tab_ncases, pth_ncases),
         ("sensitivity", tab_scases, pth_scases),
     ):
-        m_error = tab["status"] != "run complete"
+        m_error = tab["status"] != "Run: Success"
         if np.any(m_error):
             if on_case_error == "ignore":
                 tab = tab[np.logical_not(m_error)]
             elif on_case_error == "hold":
                 raise Exception(
-                    f"Of {len(tab)} sensitivity cases, {np.sum(tab['status'] == 'run complete')} cases ran successfully.  {np.sum(tab['status'] == 'generation error')} cases had generation errors, and {np.sum(tab['status'] == 'run error')} cases had run errors.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `plot_sensitivity` manually."
+                    f"Of {len(tab)} sensitivity cases, {np.sum(tab['status'] == 'Run: Success')} cases ran successfully and {np.sum(tab['status'] != 'Run: Success')} did not.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `tabulate` and `plot_sensitivity` manually."
                 )
             elif on_case_error == "stop":
                 # An error message would have been printed earlier when a model
@@ -573,12 +584,12 @@ def plot_sensitivity(analysis):
     # they do not, it's probably a user problem.  But you still need to
     # see what happened when there's an error, so the plotting function
     # should press on.
-    named_cases = named_cases[named_cases["status"] == "run complete"]
+    named_cases = named_cases[named_cases["status"] == "Run: Success"]
 
     # Sensitivity cases
     pth_cases = analysis.directory / f"generated_cases.csv"
     cases = pd.read_csv(pth_cases, index_col=0)
-    cases = cases[cases["status"] == "run complete"]
+    cases = cases[cases["status"] == "Run: Success"]
 
     # Read parameters
     #
