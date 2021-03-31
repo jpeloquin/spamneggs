@@ -115,7 +115,7 @@ class Analysis:
         e_analysis = tree.find("preprocessor[@proc='spamneggs']/analysis")
         if e_analysis is None:
             raise ValueError(
-                f"No XML element with path 'preprocessor/analysis' found in file '{analysis_file}'."
+                f"No XML element with path 'preprocessor/analysis' found in file '{pth}'."
             )
         # Analysis name
         e_analysis = tree.find("preprocessor/analysis")
