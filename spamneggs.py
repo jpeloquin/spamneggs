@@ -6,7 +6,8 @@ import math
 from pathlib import Path
 import subprocess
 import sys
-from typing import Optional, Generator, Dict
+import traceback
+from typing import Optional, Generator, Dict, Sequence
 
 # Third-party packages
 import matplotlib as mpl
@@ -28,6 +29,7 @@ import scipy.cluster
 import febtools as feb
 from febtools.febio import (
     FEBioError,
+    CheckError,
     NoSolutionError,
     run_febio_unchecked,
     run_febio_checked,
@@ -249,8 +251,17 @@ def _trap_err(fun):
     def wrapped(case):
         try:
             return fun(case)
+        except FEBioError as err:
+            print(f"Case {case.name}: {err}")
+            return case, err
+        except CheckError as err:
+            print(f"Case {case.name}: {err}\n")
+            return case, err
         except Exception as err:
-            print(f"{err.__class__.__name__}: {err}")
+            print(f"Case {case.name}:")
+            # For an error in Python code we want to print the traceback
+            traceback.print_exc()
+            print()
             return case, err
 
     return wrapped
@@ -291,11 +302,7 @@ def do_parallel(cases, fun, on_case_error="stop"):
         # Should we continue submitting cases?
         if isinstance(err, Exception) and on_case_error == "stop":
             print(
-                f"While working on case {case.name}, the following error was encountered:"
-            )
-            print(err)
-            print(
-                f"Check the log files for the cases's model file ({case.sim_file}), as well as the helper simulations (if any) in the case's directory ({case.case_dir}).  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop."
+                f"While working on case {case.name}, a {err.__class__.__name__} was encountered.  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop.\n"
             )
             pool.close()
             break
