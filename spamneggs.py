@@ -1,46 +1,39 @@
+import json
+import math
+import sys
+import traceback
 from collections import defaultdict
 from copy import deepcopy
 from itertools import product
-import json
-import math
 from pathlib import Path
-import subprocess
-import sys
-import traceback
 from typing import Callable, Dict, Sequence
-
-# Third-party packages
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-from matplotlib.figure import Figure
-from matplotlib import ticker
-from matplotlib.cm import ScalarMappable
-from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Bbox
-from mpl_toolkits.axisartist.parasite_axes import HostAxes, ParasiteAxes
-from pathos.pools import ProcessPool
-import numpy as np
-import pandas as pd
-import psutil
-import scipy.cluster
 
 # In-house packages
 import febtools as feb
+# Third-party packages
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import pandas as pd
+import psutil
+import scipy.cluster
 from febtools.febio import (
     FEBioError,
     CheckError,
-    NoSolutionError,
-    run_febio_unchecked,
     run_febio_checked,
 )
+from matplotlib import ticker
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.cm import ScalarMappable
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
+from matplotlib.transforms import Bbox
+from pathos.pools import ProcessPool
 
 # Same-package modules
-from . import febioxml as fx
 from . import colors
+from . import febioxml as fx
 from .febioxml import read_febio_xml as read_xml
 from .variables import *
-
 
 NUM_WORKERS = psutil.cpu_count(logical=False)
 
