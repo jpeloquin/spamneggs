@@ -562,7 +562,7 @@ def tabulate_analysis_tsvars(analysis, cases_file):
     for i in cases.index:
         pth_tsvars = pth_cases.parent / "case_output" / f"case={i}_timeseries_vars.csv"
         case_data = pd.read_csv(pth_tsvars)
-        varnames = set(case_data.columns) - set(["Time", "Step"])
+        varnames = set(case_data.columns) - {"Time", "Step"}
         case_data = case_data.rename({k: f"{k} [var]" for k in varnames}, axis=1)
         case_data["Case"] = i
         for pname in analysis.parameters:
