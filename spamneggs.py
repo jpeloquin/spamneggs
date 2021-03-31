@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import traceback
-from typing import Optional, Generator, Dict, Sequence
+from typing import Callable, Dict, Sequence
 
 # Third-party packages
 import matplotlib as mpl
@@ -81,6 +81,7 @@ class Analysis:
         variables: dict,
         name,
         parentdir=None,
+        checks: Sequence[Callable] = tuple(),
     ):
         """Return Analysis object
 
@@ -91,10 +92,16 @@ class Analysis:
         parentdir := The directory in which the analysis folder will be
         stored. Defaults to the current working directory.
 
+        :param checks: Sequence of callables that take a febtools Model as their lone
+        argument and should raise an exception if the check fails, or return None if
+        the check succeeds.  This is meant for user-defined verification of
+        simulation output.
+
         """
         self.model = model
         self.parameters: dict = parameters
         self.variables: dict = variables
+        self.checks = checks
         self.name = name
         if parentdir is None:
             self.directory = Path(name).absolute() / self.name
@@ -251,15 +258,11 @@ def _trap_err(fun):
     def wrapped(case):
         try:
             return fun(case)
-        except FEBioError as err:
-            print(f"Case {case.name}: {err}")
-            return case, err
-        except CheckError as err:
-            print(f"Case {case.name}: {err}\n")
-            return case, err
         except Exception as err:
             print(f"Case {case.name}:")
-            # For an error in Python code we want to print the traceback
+            # For an error in Python code we want to print the traceback.  Special
+            # simulation errors should be trapped elsewhere; only truly exceptional
+            # exceptions should hit this trap.
             traceback.print_exc()
             print()
             return case, err
@@ -315,8 +318,37 @@ def gen_case(case):
 
 
 def run_case(case):
-    return_code = run_febio_checked(case.sim_file)
-    return case, SUCCESS
+    """Run a case's simulations and perform all associated checks
+
+    The case may be partially or completely solved.  case.analysis must be defined,
+    as the checks are stored on the Analysis object.
+
+    """
+    # Having a separate check_case function was considered, but there's no use case
+    # for separating the checks from the run.  Some basic checks are done by
+    # `run_febio_checked` anyway and these cannot be turned off.
+    problems = []
+    try:
+        proc = run_febio_checked(case.sim_file)
+    except FEBioError as err:
+        print(f"Case {case.name}: {err!r}")
+        problems.append(err)
+    except CheckError as err:
+        print(f"Case {case.name}: {err!r}")
+        problems.append(err)
+    # For general exceptions, let the program blow up.  They can be trapped at a
+    # higher level if desired.
+    for f in case.analysis.checks:
+        try:
+            f(case)
+        except CheckError as err:
+            print(f"Case {case.name}: {err!r}")
+            problems.append(err)
+    if problems:
+        status = problems
+    else:
+        status = SUCCESS
+    return case, status
 
 
 def run_sensitivity(analysis, nlevels, on_case_error="stop"):
@@ -337,6 +369,8 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
                 # Don't include the full exception message, which would make it
                 # harder to filter the table
                 s = err.__class__.__name__
+            elif isinstance(err, Sequence):
+                s = ", ".join(e.__class__.__name__ for e in err)
             else:
                 s = str(err)
             tab.loc[i, "status"] = f"{prefix}{s}"
@@ -356,7 +390,11 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     write_cases_table(tab_ncases, pth_ncases)
 
     # Run the named cases
-    status = do_parallel(iter_generated_cases(ncases, status_ncases), run_case)
+    status = do_parallel(
+        iter_generated_cases(ncases, status_ncases),
+        run_case,
+        on_case_error=on_case_error,
+    )
     replace_status(tab_ncases, status, step="Run")
     write_cases_table(tab_ncases, pth_ncases)
 
@@ -555,7 +593,7 @@ def tabulate(analysis: Analysis):
         for i in cases.index:
             casename = Path(cases["path"].loc[i]).stem
             status = cases.loc[i, "status"]
-            if status == "error: no sim":
+            if not status == "Run: Success":
                 # Total simulation failure.  There is nothing to
                 # tabulate; don't bother trying.
                 continue
