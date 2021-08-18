@@ -12,6 +12,7 @@ from typing import Callable, Dict, Sequence
 from lxml import etree
 
 import febtools as feb
+
 # Third-party packages
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -644,11 +645,16 @@ def plot_sensitivity(analysis):
     param_values = {k: cases[k] for k in param_names}
 
     # Get variable names
-    record, tab_timeseries = read_case_data(analysis.directory / cases["path"].iloc[0])
-    ivar_names = [nm for nm in record["instantaneous variables"]]
-    tsvar_names = [nm for nm in record["time series variables"]]
+    ivar_names = [
+        nm
+        for nm, var in analysis.variables.items()
+        if var.temporality == "instantaneous"
+    ]
+    tsvar_names = [
+        nm for nm, var in analysis.variables.items() if var.temporality == "time series"
+    ]
 
-    # Plots for instantantaneous variables
+    # Plots for instantaneous variables
     ivar_values = defaultdict(list)
     for i in cases.index:
         # TODO: There is an opportunity for improvement here: We could
@@ -665,7 +671,6 @@ def plot_sensitivity(analysis):
         make_sensitivity_ivar_figures(
             analysis, param_names, param_values, ivar_names, ivar_values
         )
-
     # Plots for time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, pth_cases)
