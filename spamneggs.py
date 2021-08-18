@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Callable, Dict, Sequence
 
 # In-house packages
+from lxml import etree
+
 import febtools as feb
 # Third-party packages
 import matplotlib as mpl
@@ -129,7 +131,8 @@ class Analysis:
         # Model
         fx.strip_preprocessor_elems(tree, parameters)
         # ↑ mutates in-place
-        model = FEBioXMLModel(tree, parameter_locations)
+        xml = etree.tostring(tree)
+        model = FEBioXMLModel(xml, parameter_locations)
         return cls(model, parameters, variables, name, analysis_dir)
 
 
@@ -201,24 +204,26 @@ class FEBioXMLModel:
 
     """
 
-    def __init__(self, tree, parameters: dict):
+    def __init__(self, xml: str, parameters: dict):
         """Return an FEBioXMLModel instance
 
-        tree := the FEBio XML tree.
+        xml := the FEBio XML tree.
 
         parameters := a dictionary of parameter name → list of
         ElementPath paths to elements in the XML for which the element's
         text content is to be replaced by the parameter's value.
 
         """
-        self.tree = tree
+        # Note that lxml objects cannot be serialized using pickle (they have no
+        # support for serialization) so we need to store the XML as a string.  This
+        # is also helpful because strings are immutable, making the data safe for use
+        # in multiprocessing.
+        self.xml = xml
         self.parameters = parameters
 
     def __call__(self, case: Case):
-        # Create a copy of the tree so we don't alter the original tree.  This
-        # is necessary in case multiple worker threads are generating models
-        # from the same FEBioXMLModel object.
-        tree = deepcopy(self.tree)
+        # Rehydrate the XML
+        tree = etree.fromstring(self.xml).getroottree()
         # Alter the model parameters to match the current case
         for pname, plocs in self.parameters.items():
             for ploc in plocs:
