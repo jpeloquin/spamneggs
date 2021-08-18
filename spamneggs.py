@@ -248,7 +248,7 @@ def _ensure_analysis_directory(analysis):
             "Analysis.directory is None.  make_named_cases requires an output directory."
         )
     if not analysis.directory.exists():
-        analysis.directory.mkdir()
+        analysis.directory.mkdir(parents=True)
 
 
 def _trap_err(fun):
