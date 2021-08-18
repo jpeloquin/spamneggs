@@ -124,7 +124,7 @@ class Analysis:
         if "path" in e_analysis.attrib:
             analysis_dir = Path(e_analysis["path"]).absolute
         else:
-            analysis_dir = pth.parent.absolute() / name
+            analysis_dir = pth.parent.absolute() / pth.stem
         # Parameters
         parameters, parameter_locations = fx.get_parameters(tree)
         # Variables
