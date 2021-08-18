@@ -583,7 +583,8 @@ def tabulate(analysis: Analysis):
         ("named", "named"),
         ("sensitivity", "generated"),
     ):
-        ivars_table = defaultdict(list)
+        ivars_table = defaultdict(list)  # we don't know param names in advance
+        ivars_table["case"] = []  # force creation of the index column
         pth_cases = analysis.directory / f"{fbase}_cases.csv"
         cases = pd.read_csv(pth_cases, index_col=0)
         if len(cases) == 0:
