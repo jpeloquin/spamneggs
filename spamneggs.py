@@ -40,6 +40,8 @@ from .variables import *
 
 NUM_WORKERS = psutil.cpu_count(logical=False)
 
+COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as zero
+
 CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
     "div_blue_black_red", colors.diverging_bky_60_10_c30_n256
 )
@@ -911,15 +913,24 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     n = len(data.index.levels[0])
     sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
     for i in range(n):
-        corr = data.loc[i][params + varnames].corr()
-        cov = data.loc[i][params + varnames].cov()
+        values = data.loc[i][params + varnames]
+        if np.any(np.isnan(values)):
+            raise ValueError(
+                "NaNs detected in output variables' values.  Aborting "
+                "plots of sensitivity heat maps because the distance "
+                "vector calculations will propagate the NaNs."
+            )
+        corr = values.corr()
+        cov = values.cov()
         for pi, pnm in enumerate(params):
             for vi, vnm in enumerate(varnames):
                 ρ = corr[pnm][vnm]
-                σ = cov[vnm][vnm]
                 # Coerce correlation to zero if it is nan only because
-                # the output variable has no variance
-                if np.isnan(ρ) and σ == 0:
+                # the output variable has practically no variance
+                if np.isnan(ρ) and (
+                    cov[vnm][pnm] <= COV_ZERO_THRESH
+                    and cov[vnm][vnm] <= COV_ZERO_THRESH
+                ):
                     ρ = 0
                 sensitivity_vectors[vi][i][pi] = ρ
 
