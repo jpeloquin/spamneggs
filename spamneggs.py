@@ -569,13 +569,22 @@ def tabulate_analysis_tsvars(analysis, cases_file):
     analysis_data = pd.DataFrame()
     for i in cases.index:
         pth_tsvars = pth_cases.parent / "case_output" / f"case={i}_timeseries_vars.csv"
-        case_data = pd.read_csv(pth_tsvars)
-        varnames = set(case_data.columns) - {"Time", "Step"}
-        case_data = case_data.rename({k: f"{k} [var]" for k in varnames}, axis=1)
-        case_data["Case"] = i
-        for pname in analysis.parameters:
-            pcolname = f"{pname} [param]"
-            case_data[pcolname] = cases[pname].loc[i]
+        tsvars = pd.read_csv(pth_tsvars)
+        # Check for missing variables in the on-disk data
+        available_vars = set(tsvars.columns)
+        missing_vars = set(analysis.variables) - available_vars
+        if missing_vars:
+            raise ValueError(
+                f"Did not find variable(s) {', '.join(missing_vars)} in file: {pth_tsvars}"
+            )
+        # The presence of extra variables in the data on disk should not be cause for
+        # alarm.  One batch of simulations can support multiple analysis, and a given
+        # analysis may not use all of the available variables.  But we do not want to
+        # collect variables that the analysis did not ask for.
+        case_data = {"Case": i, "Step": tsvars["Step"], "Time": tsvars["Time"]}
+        case_data.update({f"{p} [param]": cases[p].loc[i] for p in analysis.parameters})
+        case_data.update({f"{v} [var]": tsvars[v] for v in analysis.variables})
+        case_data = pd.DataFrame(case_data)
         analysis_data = pd.concat([analysis_data, case_data])
     return analysis_data
 
@@ -905,7 +914,6 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     params = [c for c in tsdata.columns if c.endswith(" [param]")]
     varnames = [c for c in tsdata.columns if c.endswith(" [var]")]
     # ^ These names are tagged with their type to avoid name collisions.
-    # The plain names passed as arguments cannot be used.
     data = tsdata.copy()  # need to mutate the table
     data = data.drop("Time", axis=1).set_index(["Step", "Case"])
 
