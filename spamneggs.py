@@ -14,8 +14,6 @@ from lxml import etree
 import febtools as feb
 
 # Third-party packages
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import pandas as pd
 import psutil
 import scipy.cluster
@@ -24,6 +22,8 @@ from febtools.febio import (
     CheckError,
     run_febio_checked,
 )
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 from matplotlib import ticker
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.cm import ScalarMappable
@@ -862,31 +862,31 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
         timeseries = pd.DataFrame(timeseries)
     if len(timeseries) == 0:
         raise ValueError("No values in time series data.")
-    timeseries = timeseries.set_index("Step")
     nm_xaxis = "Time"
-    nms_yaxis = [nm for nm in timeseries.columns if nm != nm_xaxis]
+    varnames = [nm for nm in timeseries.columns if not nm in ("Step", nm_xaxis)]
     # Produce one large plot with all variables
-    axarr = timeseries.plot(marker=".", subplots=True, x=nm_xaxis, legend=False)
-    for nm, ax in zip(nms_yaxis, axarr):
-        ax.set_ylabel(nm)
-    fig = axarr[0].figure
-    fig.set_size_inches((7, 1.0 + 1.25 * (len(timeseries.columns) - 1)))
+    fig = Figure()
+    FigureCanvas(fig)
+    axarr = fig.subplots(len(varnames), 1, sharex=True, squeeze=False)
+    for varname, ax in zip(varnames, axarr[:, 0]):
+        ax.plot(timeseries[nm_xaxis], timeseries[varname], marker=".")
+        ax.set_ylabel(varname)
+    fig.set_size_inches((7, 1.0 + 1.25 * len(varnames)))
     if casename is not None:
-        axarr[0].set_title(casename)
+        axarr[0, 0].set_title(casename)
     # Format axes
-    axarr[-1].set_xlabel(f"{nm_xaxis} [s]")  # assumed unit
+    axarr[-1, 0].set_xlabel(f"{nm_xaxis} [s]")  # assumed unit
     formatter = mpl.ticker.ScalarFormatter()
     formatter.set_powerlimits((-3, 4))
-    axarr[-1].xaxis.set_major_formatter(formatter)
+    axarr[-1, 0].xaxis.set_major_formatter(formatter)
     # Write figure to disk
     fig.tight_layout()
     fig.savefig(dir_out / f"{stem}timeseries_vars.svg")
     plt.close(fig)
     # Produce one small plot for each variable
-    timeseries = timeseries.reset_index()
-    for nm in nms_yaxis:
-        fig = plot_case_tsvar(timeseries, nm, casename)
-        fig.savefig(dir_out / f"{stem}timeseries_var={nm}.svg")
+    for varname in varnames:
+        fig = plot_case_tsvar(timeseries, varname, casename)
+        fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
 def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6):
