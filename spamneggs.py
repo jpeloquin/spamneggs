@@ -554,21 +554,24 @@ def tabulate_case_write(case, dir_out=None):
     return record, timeseries
 
 
-def tabulate_analysis_tsvars(analysis, cases_file):
+def tabulate_analysis_tsvars(analysis, cases):
     """Tabulate time series variables for all cases in an analysis
 
     The time series tables for the individual cases must have already
     been written to disk.
 
+    :analysis: Analysis object.
+
+    :cases: DataFrame of cases to tabulate, usually obtained by reading
+    generated_cases.csv or named_cases.csv from the analysis directory.
+
     """
     # TODO: It would be beneficial to build up the whole-analysis time
     # series table at the same time as case time series tables are
     # written to disk, instead of re-reading everything from disk.
-    pth_cases = Path(cases_file)
-    cases = pd.read_csv(cases_file, index_col=0)
     analysis_data = pd.DataFrame()
     for i in cases.index:
-        pth_tsvars = pth_cases.parent / "case_output" / f"case={i}_timeseries_vars.csv"
+        pth_tsvars = analysis.directory / "case_output" / f"case={i}_timeseries_vars.csv"
         tsvars = pd.read_csv(pth_tsvars)
         # Check for missing variables in the on-disk data
         available_vars = set(tsvars.columns)
@@ -682,9 +685,10 @@ def plot_sensitivity(analysis):
         make_sensitivity_ivar_figures(
             analysis, param_names, param_values, ivar_names, ivar_values
         )
+
     # Plots for time series variables
     if len(tsvar_names) > 0:
-        tsdata = tabulate_analysis_tsvars(analysis, pth_cases)
+        tsdata = tabulate_analysis_tsvars(analysis, cases)
         make_sensitivity_tsvar_figures(
             analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases
         )
