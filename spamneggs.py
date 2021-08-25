@@ -670,18 +670,20 @@ def plot_sensitivity(analysis):
 
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
-    for i in cases.index:
-        # TODO: There is an opportunity for improvement here: We could
-        # preserve the tree from the first read of the analysis XML and
-        # re-use it here instead of re-reading the analysis XML for
-        # every case.  However, to do this the case generation must not
-        # alter the analysis XML tree.
-        record, tab_timeseries = read_case_data(
-            analysis.directory / cases["path"].loc[i]
-        )
-        for nm in ivar_names:
-            ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
     if len(ivar_names) > 0:
+        # Skip doing the work of reading each case's data if there are
+        # no instantaneous variables to tabulate
+        for i in cases.index:
+            # TODO: There is an opportunity for improvement here: We could
+            # preserve the tree from the first read of the analysis XML and
+            # re-use it here instead of re-reading the analysis XML for
+            # every case.  However, to do this the case generation must not
+            # alter the analysis XML tree.
+            record, tab_timeseries = read_case_data(
+                analysis.directory / cases["path"].loc[i]
+            )
+            for nm in ivar_names:
+                ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
         make_sensitivity_ivar_figures(
             analysis, param_names, param_values, ivar_names, ivar_values
         )
