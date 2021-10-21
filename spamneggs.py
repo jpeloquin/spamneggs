@@ -924,7 +924,7 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     data = data.drop("Time", axis=1).set_index(["Step", "Case"])
 
     # Calculate sensitivity vectors
-    n = len(data.index.levels[0])
+    n = len(data.index.levels[0])  # number of time points
     sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
     for i in range(n):
         values = data.loc[i][params + varnames]
