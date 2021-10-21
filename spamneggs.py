@@ -56,6 +56,12 @@ class CaseGenerationError(Exception):
     pass
 
 
+class UnconstrainedTimesError(Exception):
+    """Raise when simulation is likely to return values at random times"""
+
+    pass
+
+
 class Success:
     """Return value for successful execution"""
 
@@ -325,8 +331,16 @@ def run_case(case):
     as the checks are stored on the Analysis object.
 
     """
-    # Having a separate check_case function was considered, but there's no use case
-    # for separating the checks from the run.  Some basic checks are done by
+    # Verify that simulation file can be loaded.  If not, we won't be able to extract
+    # data from it later anyway.
+    model = feb.load_model(case.sim_file)
+    # Verify that simulation file uses must points.  If it does not, the return values
+    # from the various cases will not be at the same times, and the sensitivity analysis
+    # will be invalid.
+    if not all(feb.febio.uses_must_points(model)):
+        raise UnconstrainedTimesError(f"{case.sim_file} does not use so-called 'must points' in all steps.  To support sensitivity analysis, values must be calculated and stored at the same times in all cases.  FEBio is highly unlikely to do this unless it is forced to through the use of must points.")
+    # Having a separate check_case function was considered, but there's no use case for
+    # separating the checks from the run.  Some basic checks are done by
     # `run_febio_checked` anyway and these cannot be turned off.
     problems = []
     try:
