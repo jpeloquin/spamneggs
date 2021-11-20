@@ -212,7 +212,7 @@ def parse_var_selector(text):
         # Nodes, canonical face tuples, and elements have 0-indexed IDs
         # as far as febtools and spamneggs are concerned
         if hasattr(entity_id[0], "__iter__"):
-            var_inf["entity ID"] = tuple(a - 1 for a in entity_id[0])
+            var_info["entity ID"] = tuple(a - 1 for a in entity_id[0])
         else:
             var_info["entity ID"] = entity_id[0] - 1
     # Region selector (optional)
