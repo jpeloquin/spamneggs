@@ -338,7 +338,9 @@ def run_case(case):
     # from the various cases will not be at the same times, and the sensitivity analysis
     # will be invalid.
     if not all(feb.febio.uses_must_points(model)):
-        raise UnconstrainedTimesError(f"{case.sim_file} does not use so-called 'must points' in all steps.  To support sensitivity analysis, values must be calculated and stored at the same times in all cases.  FEBio is highly unlikely to do this unless it is forced to through the use of must points.")
+        raise UnconstrainedTimesError(
+            f"{case.sim_file} does not use so-called 'must points' in all steps.  To support sensitivity analysis, values must be calculated and stored at the same times in all cases.  FEBio is highly unlikely to do this unless it is forced to through the use of must points."
+        )
     # Having a separate check_case function was considered, but there's no use case for
     # separating the checks from the run.  Some basic checks are done by
     # `run_febio_checked` anyway and these cannot be turned off.
@@ -585,7 +587,9 @@ def tabulate_analysis_tsvars(analysis, cases):
     # written to disk, instead of re-reading everything from disk.
     analysis_data = pd.DataFrame()
     for i in cases.index:
-        pth_tsvars = analysis.directory / "case_output" / f"case={i}_timeseries_vars.csv"
+        pth_tsvars = (
+            analysis.directory / "case_output" / f"case={i}_timeseries_vars.csv"
+        )
         tsvars = pd.read_csv(pth_tsvars)
         # Check for missing variables in the on-disk data
         available_vars = set(tsvars.columns)
