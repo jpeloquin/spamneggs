@@ -355,6 +355,7 @@ def run_case(case):
         problems.append(err)
     # For general exceptions, let the program blow up.  They can be trapped at a
     # higher level if desired.
+    # TODO: When online tabulation available, make variable values available to checks
     for f in case.analysis.checks:
         try:
             f(case)
