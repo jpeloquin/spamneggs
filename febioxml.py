@@ -36,9 +36,10 @@ TAG_FOR_ENTITY_TYPE = {
 
 
 class FunctionVar:
-    def __init__(self, expr, env):
+    def __init__(self, expr, env, temporality="time series"):
         self.expr = expr
         self.env = env
+        self.temporality = temporality
 
     def __call__(self, case):
         return eval(self.expr, self.env, {"case": case, "model": case.solution})
