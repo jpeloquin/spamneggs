@@ -759,7 +759,7 @@ def make_error_figures(analysis):
     gs0 = GridSpec(
         1, 2, figure=fig, width_ratios=(len(outcome_count), len(error_count))
     )
-    # Outcome counts
+    # (1) Outcome counts
     ax = fig.add_subplot(gs0[0, 0])
     ax.set_title("Run status", fontsize=FONTSIZE_FIGLABEL)
     ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
@@ -769,7 +769,7 @@ def make_error_figures(analysis):
     ax.set_ylim(0, n)
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-    # Error counts
+    # (2) Error counts
     ax = fig.add_subplot(gs0[0, 1])
     ax.set_title("Error breakdown", fontsize=FONTSIZE_FIGLABEL)
     ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
@@ -783,9 +783,9 @@ def make_error_figures(analysis):
     for label in ax.get_xticklabels():
         label.set_rotation(28)
         label.set_ha("right")
-    # Figure is complete
+    # Outcome & error count figure is complete
     fig.tight_layout()
-    fig.savefig(analysis.directory / "run_outcomes_and_errors.svg")
+    fig.savefig(analysis.directory / "run_outcomes_and_error_counts.svg")
 
 
 def make_sensitivity_ivar_figures(
