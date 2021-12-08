@@ -1528,8 +1528,9 @@ def plot_tsvars_line(
                         color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
                         label=label,
                     )
-                    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-                    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+                # Format the plot
+                ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+                ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
                 if len(levels[subject_param]) >= CBAR_LEVELS_THRESHOLD:
                     # There are many levels; use only color-coding to show parameter values
                     cbar = fig.colorbar(
