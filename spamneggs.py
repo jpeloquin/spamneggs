@@ -724,13 +724,13 @@ def make_error_figures(analysis):
     tab_cases = pd.read_csv(analysis.directory / f"generated_cases.csv")
     n = len(tab_cases)
     error_cases = defaultdict(list)
-    outcome_count = {"Incomplete": 0, "Error": 0, "Success": 0}
+    outcome_count = {"No Run": 0, "Error": 0, "Success": 0}
     for i in range(len(tab_cases)):
         status = tab_cases["status"].loc[i]
         idx = status.find(":")
         phase = status[:idx]
         if phase != "Run":
-            outcome_count["Incomplete"] += 1
+            outcome_count["No Run"] += 1
             continue
         codes = [s.strip() for s in status[idx + 1 :].split(",")]
         if "Success" in codes:
@@ -765,7 +765,7 @@ def make_error_figures(analysis):
     ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
     ax.bar("Success", outcome_count["Success"], color="black")
     ax.bar("Error", outcome_count["Error"], color="gray")
-    ax.bar("Incomplete", outcome_count["Incomplete"], color="white", edgecolor="gray")
+    ax.bar("No Run", outcome_count["No Run"], color="white", edgecolor="gray")
     ax.set_ylim(0, n)
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
