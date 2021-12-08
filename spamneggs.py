@@ -787,6 +787,56 @@ def make_error_figures(analysis):
     fig.tight_layout()
     fig.savefig(analysis.directory / "run_outcomes_and_error_counts.svg")
 
+    # Plot correlation between errors
+    # TODO: Clean up the spacing
+    figw = 7.5
+    figh = 6.0
+    fig = Figure(figsize=(figw, figh))
+    FigureCanvas(fig)
+    codes = [c for c in sorted(error_count.keys()) if c != "Success"]
+    marginal_p = np.full((len(codes), len(codes)), np.nan)
+    for i in range(len(codes)):
+        for j in range(len(codes)):
+            if i == j:
+                continue
+            marginal_p[i, j] = np.sum(
+                np.logical_and(error_var[codes[i]], error_var[codes[j]])
+            ) / np.sum(error_var[codes[j]])
+    ax = fig.add_subplot()
+    cmap = mpl.cm.get_cmap("cividis")
+    im = ax.matshow(marginal_p, cmap=cmap, origin="upper")
+    # Write the value of each cell as text
+    for (i, j), p in np.ndenumerate(marginal_p):
+        if i == j:
+            continue
+        ax.text(
+            j,
+            i,
+            "{:0.2f}".format(p),
+            ha="center",
+            va="center",
+            backgroundcolor=(1, 1, 1, 0.5),
+            fontsize=FONTSIZE_TICKLABEL,
+        )
+    # x-tick formatting
+    ax.xaxis.tick_bottom()
+    ax.set_xticks([i for i in range(len(codes))])
+    ax.set_xticklabels(codes)
+    ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
+    for label in ax.get_xticklabels():
+        label.set_rotation(28)
+        label.set_ha("right")
+    # y-tick formatting
+    ax.set_yticks([i for i in range(len(codes))])
+    ax.set_yticklabels(codes)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
+    # Colorbar
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("$P(Y_{Err} | X_{Err})$", fontsize=FONTSIZE_AXLABEL)
+    cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+    fig.tight_layout()
+    fig.savefig(analysis.directory / "run_error_co-ocurrence.svg")
+
 
 def make_sensitivity_ivar_figures(
     analysis, param_names, param_values, ivar_names, ivar_values
