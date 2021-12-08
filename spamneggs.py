@@ -1476,10 +1476,16 @@ def plot_tsvars_line(
                     record, tab_timeseries = read_case_data(
                         analysis.directory / named_cases.loc[case_id, "path"]
                     )
+                    value = named_cases[subject_param].loc[case_id]
+                    units = analysis.parameters[subject_param].units
+                    if units == "1":
+                        label = f"{case_id}; {subject_param} = {value}"
+                    else:
+                        label = f"{case_id}; {subject_param} = {value} {units}"
                     ax.plot(
                         tab_timeseries["Step"],
                         tab_timeseries[varname],
-                        label=case_id,
+                        label=label,
                         color=colors.categorical_n7[i % len(colors.categorical_n7)],
                     )
                 ax.legend()
@@ -1510,12 +1516,17 @@ def plot_tsvars_line(
                     record, tab_timeseries = read_case_data(
                         analysis.directory / cases.loc[case_id, "path"]
                     )
-                    # TODO: Label needs units support
+                    units = analysis.parameters[subject_param].units
+                    value = cases[subject_param].loc[case_id]
+                    if units == "1":
+                        label = f"{value}"
+                    else:
+                        label = f"{value} {units}"
                     ax.plot(
                         tab_timeseries["Step"],
                         tab_timeseries[varname],
                         color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
-                        label=f"{cases[subject_param].loc[case_id]}",
+                        label=label,
                     )
                     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
