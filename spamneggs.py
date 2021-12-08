@@ -1442,6 +1442,7 @@ def plot_tsvars_line(
     """
     # TODO: Figure out how to plot parameter sensitivity for multiple
     # variation (parameter interactions)
+    CBAR_LEVELS_THRESHOLD = 6
     levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
     for subject_param, subject_values in param_values.items():
         other_params = [p for p in param_names if p != subject_param]
@@ -1499,7 +1500,8 @@ def plot_tsvars_line(
                 ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
                 axs.append(ax)
                 ax.set_title(
-                    f"Sensitivity levels' index = {i+1}", fontsize=FONTSIZE_AXLABEL
+                    f"Other parameters set to level index = {i+1}",
+                    fontsize=FONTSIZE_AXLABEL,
                 )
                 ax.set_ylabel(varname, fontsize=FONTSIZE_AXLABEL)
                 ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
@@ -1508,19 +1510,27 @@ def plot_tsvars_line(
                     record, tab_timeseries = read_case_data(
                         analysis.directory / cases.loc[case_id, "path"]
                     )
+                    # TODO: Label needs units support
                     ax.plot(
                         tab_timeseries["Step"],
                         tab_timeseries[varname],
                         color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_param])),
+                        label=f"{cases[subject_param].loc[case_id]}",
                     )
                     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
                     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-                cbar = fig.colorbar(
-                    ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
-                    ax=ax,
-                )
-                cbars.append(cbar)
-                cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+                if len(levels[subject_param]) >= CBAR_LEVELS_THRESHOLD:
+                    # There are many levels; use only color-coding to show parameter values
+                    cbar = fig.colorbar(
+                        ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
+                        ax=ax,
+                    )
+                    cbars.append(cbar)
+                    cbar.set_label(subject_param, fontsize=FONTSIZE_AXLABEL)
+                else:
+                    # There are only a few levels; use a legend as well as color-coding
+                    if ax.lines:
+                        ax.legend(title=subject_param, fontsize=FONTSIZE_AXLABEL)
             # Link the y axes if each has a similar range (within an
             # order of magnitude) as the others
             ranges = [ax.get_ylim()[1] - ax.get_ylim()[0] for ax in axs]
@@ -1537,17 +1547,18 @@ def plot_tsvars_line(
             # the downside of slightly (a few px) breaking alignment
             # between the colorbar and its associated subplot.
             fig.canvas.draw()
-            for cbar in cbars:
-                old_bbox = cbar.ax.get_window_extent().transformed(
-                    fig.dpi_scale_trans.inverted()
-                )
-                new_bbox = Bbox.from_bounds(
-                    old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
-                )
-                cbar.ax.set_position(
-                    new_bbox.transformed(fig.dpi_scale_trans).transformed(
-                        fig.transFigure.inverted()
+            if cbars:
+                for cbar in cbars:
+                    old_bbox = cbar.ax.get_window_extent().transformed(
+                        fig.dpi_scale_trans.inverted()
                     )
-                )
+                    new_bbox = Bbox.from_bounds(
+                        old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
+                    )
+                    cbar.ax.set_position(
+                        new_bbox.transformed(fig.dpi_scale_trans).transformed(
+                            fig.transFigure.inverted()
+                        )
+                    )
             nm = f"timeseries_var_lineplot_-_{varname}_vs_{subject_param}.svg"
             fig.savefig(analysis.directory / nm.replace(" ", "_"))
