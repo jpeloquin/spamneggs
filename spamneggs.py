@@ -687,6 +687,9 @@ def plot_sensitivity(analysis):
         nm for nm, var in analysis.variables.items() if var.temporality == "time series"
     ]
 
+    # Plots for errors
+    make_error_figures(analysis)
+
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
     if len(ivar_names) > 0:
@@ -713,6 +716,76 @@ def plot_sensitivity(analysis):
         make_sensitivity_tsvar_figures(
             analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases
         )
+
+
+def make_error_figures(analysis):
+    """Plot error proportions and correlations"""
+    # Collect error counts from cases table
+    tab_cases = pd.read_csv(analysis.directory / f"generated_cases.csv")
+    n = len(tab_cases)
+    error_cases = defaultdict(list)
+    outcome_count = {"Incomplete": 0, "Error": 0, "Success": 0}
+    for i in range(len(tab_cases)):
+        status = tab_cases["status"].loc[i]
+        idx = status.find(":")
+        phase = status[:idx]
+        if phase != "Run":
+            outcome_count["Incomplete"] += 1
+            continue
+        codes = [s.strip() for s in status[idx + 1 :].split(",")]
+        if "Success" in codes:
+            outcome_count["Success"] += 1
+            if len(codes) > 1:
+                raise ValueError(
+                    f"Case {i}: Run was recorded as successful but additional error codes were present.  The codes were {', '.join(codes)}."
+                )
+        else:
+            outcome_count["Error"] += 1
+        for code in codes:
+            error_cases[code].append(i)
+    # Count individual error types
+    error_count = {code: len(ids) for code, ids in error_cases.items()}
+    # Create atemporal boolean error variables
+    error_var = {}
+    for err, ids in error_cases.items():
+        error_var[err] = np.zeros(n, dtype=bool)
+        error_var[err][ids] = True
+
+    # Plot outcome & error counts
+    figw = 7.5
+    figh = 4
+    fig = Figure(figsize=(figw, figh))
+    FigureCanvas(fig)
+    gs0 = GridSpec(
+        1, 2, figure=fig, width_ratios=(len(outcome_count), len(error_count))
+    )
+    # Outcome counts
+    ax = fig.add_subplot(gs0[0, 0])
+    ax.set_title("Run status", fontsize=FONTSIZE_FIGLABEL)
+    ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
+    ax.bar("Success", outcome_count["Success"], color="black")
+    ax.bar("Error", outcome_count["Error"], color="gray")
+    ax.bar("Incomplete", outcome_count["Incomplete"], color="white", edgecolor="gray")
+    ax.set_ylim(0, n)
+    ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    # Error counts
+    ax = fig.add_subplot(gs0[0, 1])
+    ax.set_title("Error breakdown", fontsize=FONTSIZE_FIGLABEL)
+    ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
+    for x, c in sorted(error_count.items()):
+        if x == "Success":
+            continue
+        ax.bar(x, c)
+    ax.set_ylim(0, outcome_count["Error"])
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    for label in ax.get_xticklabels():
+        label.set_rotation(28)
+        label.set_ha("right")
+    # Figure is complete
+    fig.tight_layout()
+    fig.savefig(analysis.directory / "run_outcomes_and_errors.svg")
 
 
 def make_sensitivity_ivar_figures(
