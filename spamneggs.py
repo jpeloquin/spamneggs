@@ -10,6 +10,7 @@ from typing import Callable, Dict, Sequence
 
 # In-house packages
 from lxml import etree
+from sklearn.neighbors import KernelDensity
 
 import febtools as feb
 
@@ -918,6 +919,7 @@ def make_sensitivity_tsvar_figures(
 ):
     """Plot sensitivity of each time series variable to each parameter"""
     plot_tsvars_line(analysis, cases, named_cases)
+    plot_tsvars_pdf(analysis, tsdata, cases, named_cases)
     # TODO: The heat map figure should probably indicate which case is
     # plotting as the time series guide.
     if "nominal" in named_cases.index:
@@ -1422,11 +1424,121 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg", dpi=300)
 
 
-def plot_tsvar_pdf(
-        analysis, variable, parameter, cases, named_cases=None
-):
-    levels = {p: sorted(np.unique(param_values[p])) for p in param_names}
-    pass
+def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
+    """Plot time series variable for named cases into an axes"""
+    ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
+    ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    for i, case_id in enumerate(named_cases.index):
+        record, tab_timeseries = read_case_data(
+            analysis.directory / named_cases.loc[case_id, "path"]
+        )
+        value = named_cases[parameter].loc[case_id]
+        units = analysis.parameters[parameter].units
+        if units == "1":
+            label = f"{case_id}; {parameter} = {value}"
+        else:
+            label = f"{case_id}; {parameter} = {value} {units}"
+        ax.plot(
+            tab_timeseries["Step"],
+            tab_timeseries[variable],
+            label=label,
+            color=colors.categorical_n7[i % len(colors.categorical_n7)],
+        )
+    ax.legend()
+
+
+def plot_tsvar_pdf(analysis, tsdata, variable, parameter, cases, named_cases=None):
+    # Collect parameter names and levels
+    subject_parameter = parameter
+    # TODO: Levels information should probably be stored in the analysis object
+    levels = sorted(np.unique(cases[subject_parameter]))
+    # Collect key statistics.  These will be used for adjusting the range of the
+    # probability density plot.
+    vmin = tsdata[f"{variable} [var]"].min()
+    vmax = tsdata[f"{variable} [var]"].max()
+    # Calculate the number of subplots
+    n_plots = len(levels) + 1 if named_cases is not None else len(levels)
+    # Create figure
+    fig = Figure(constrained_layout=True)
+    nh = math.floor(n_plots ** 0.5)
+    nw = math.ceil(n_plots / nh)
+    fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
+    fig.set_constrained_layout_pads(
+        wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
+    )
+    gs = GridSpec(nh, nw, figure=fig)
+    axs = []
+    # Plot the named case(s)
+    # TODO: This is duplicated with plot_tsvar_line
+    if named_cases is not None:
+        ax = fig.add_subplot(gs[-1, -1])
+        axs.append(ax)
+        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
+    # Plot the time series variable's probability density for each level of the
+    # subject parameter
+    by_case = tsdata.set_index(["Case", "Step"])
+    for i, level in enumerate(levels):
+        cases_idx = cases[cases[parameter] == level].index
+        stratum = by_case.loc[cases_idx, :].swaplevel()
+        x = np.linspace(vmin, vmax, 100)
+        n_times = len(stratum.index.levels[0])
+        p = np.full((len(x), n_times), np.nan)
+        for step in stratum.index.levels[0]:
+            v = stratum.loc[step, :][f"{variable} [var]"].array
+            # Use sklearn.neighbors.KernelDensity because it's robust to zero
+            # variance.  scipy.stats.gaussian_kde is not; it tries to invert a matrix
+            # that will be singular if all observations have the same value.  Note
+            # that sklearn wants 2D arrays; index 0 across observations and index 1
+            # across features.
+            kde = KernelDensity(
+                kernel="gaussian", bandwidth=(vmax - vmin) / len(x)
+            ).fit(v[:, None])
+            p[:, step] = np.exp(kde.score_samples(x[:, None]))
+        # Plot the probability density heatmap
+        ax = fig.add_subplot(gs[(i + 1) // nw, i % nw])
+        axs.append(ax)
+        cmap = mpl.cm.get_cmap("cividis")
+        im = ax.imshow(
+            np.atleast_2d(p),
+            aspect="auto",
+            origin="lower",
+            interpolation="nearest",
+            cmap=cmap,
+            extent=(-0.5, n_times + 0.5, vmin, vmax)
+        )
+        cbar = fig.colorbar(im)
+        cbar.set_label("Probability Density [1]", fontsize=FONTSIZE_TICKLABEL)
+        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+        # Labels
+        units = analysis.parameters[subject_parameter].units
+        s_level = f"{level}" if units == "1" else f"{level} {units}"
+        ax.set_title(
+            f"{subject_parameter} = {s_level}",
+            fontsize=FONTSIZE_AXLABEL,
+        )
+        ax.set_xlabel("Time point [1]")
+        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+        # TODO: Units-awareness for variables
+        ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
+        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    # Finalize the figure
+    fig.suptitle(
+        f"{variable} time series vs. {subject_parameter}", fontsize=FONTSIZE_FIGLABEL
+    )
+    fig.canvas.draw()
+    nm = f"timeseries_var_pdf_-_{variable}_vs_{subject_parameter}.svg"
+    fig.savefig(analysis.directory / nm.replace(" ", "_"))
+
+
+def plot_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
+    for variable in analysis.variables:
+        for parameter in analysis.parameters:
+            plot_tsvar_pdf(
+                analysis, tsdata, variable, parameter, cases, named_cases=named_cases
+            )
 
 
 def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
@@ -1448,50 +1560,36 @@ def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     # Collect parameter names and levels
     subject_parameter = parameter
     other_parameters = [p for p in analysis.parameters if p != subject_parameter]
+    # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
-    n_levels = len(levels[subject_parameter])  # Assumes all parameters have n levels
+    # Assume all parameters have n levels; i.e., full factorial analysis
+    n_levels = len(levels[subject_parameter])
     # Calculate the number of subplots
-    n_plots = n_levels
-    if named_cases is not None:
-        n_plots += 1
+    n_plots = n_levels + 1 if named_cases is not None else n_levels
     # Create figure
     fig = Figure(constrained_layout=True)
     nh = math.floor(n_plots ** 0.5)
     nw = math.ceil(n_plots / nh)
     fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
-    fig.set_constrained_layout_pads(wspace=0.04, hspace=0.04, w_pad=2 / 72,
-        h_pad=2 / 72)
+    fig.set_constrained_layout_pads(
+        wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
+    )
     gs = GridSpec(nh, nw, figure=fig)
     axs = []
     # Plot the named case(s)
     if named_cases is not None:
         ax = fig.add_subplot(gs[0, 0])
         axs.append(ax)
-        ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
-        ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
-        ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
-        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-        for i, case_id in enumerate(named_cases.index):
-            record, tab_timeseries = read_case_data(
-                analysis.directory / named_cases.loc[case_id, "path"])
-            value = named_cases[subject_parameter].loc[case_id]
-            units = analysis.parameters[subject_parameter].units
-            if units == "1":
-                label = f"{case_id}; {subject_parameter} = {value}"
-            else:
-                label = f"{case_id}; {subject_parameter} = {value} {units}"
-            ax.plot(tab_timeseries["Step"], tab_timeseries[variable], label=label,
-                color=colors.categorical_n7[i % len(colors.categorical_n7)], )
-        ax.legend()
+        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
     # Plot the one-at-a-time sensitivity line plots
     #
     # For each of i = 1 … n levels, plot the variation in the output variable vs. the
     # subject parameter, holding all other parameters at their i'th level (the
     # "fulcrum").
     cbars = []
-    cnorm = mpl.colors.Normalize(vmin=min(levels[subject_parameter]),
-        vmax=max(levels[subject_parameter]))
+    cnorm = mpl.colors.Normalize(
+        vmin=min(levels[subject_parameter]), vmax=max(levels[subject_parameter])
+    )
     for i in range(n_levels):
         fulcrum = {p: levels[p][i] for p in other_parameters}
         # Select the cases that belong to the fulcrum
@@ -1501,30 +1599,39 @@ def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         # Make the plot panel
         ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
         axs.append(ax)
-        ax.set_title(f"Other parameters set to level index = {i + 1}",
-            fontsize=FONTSIZE_AXLABEL, )
+        ax.set_title(
+            f"Other parameters set to level index = {i + 1}",
+            fontsize=FONTSIZE_AXLABEL,
+        )
+        # TODO: Units-awareness for variables
         ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
         ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
         # Plot a line for each sensitivity level of the subject parameter
         for case_id in cases.index[m]:
             record, tab_timeseries = read_case_data(
-                analysis.directory / cases.loc[case_id, "path"])
+                analysis.directory / cases.loc[case_id, "path"]
+            )
             units = analysis.parameters[subject_parameter].units
             value = cases[subject_parameter].loc[case_id]
             if units == "1":
                 label = f"{value}"
             else:
                 label = f"{value} {units}"
-            ax.plot(tab_timeseries["Step"], tab_timeseries[variable],
+            ax.plot(
+                tab_timeseries["Step"],
+                tab_timeseries[variable],
                 color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_parameter])),
-                label=label, )
+                label=label,
+            )
         # Format the plot
         ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
         ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
         if len(levels[subject_parameter]) >= CBAR_LEVELS_THRESHOLD:
             # There are many levels; use only color-coding to show parameter values
-            cbar = fig.colorbar(ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
-                ax=ax, )
+            cbar = fig.colorbar(
+                ScalarMappable(norm=cnorm, cmap=CMAP_DIVERGE),
+                ax=ax,
+            )
             cbars.append(cbar)
             cbar.set_label(subject_parameter, fontsize=FONTSIZE_AXLABEL)
         else:
@@ -1538,8 +1645,9 @@ def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         # Link the y-axis across axes
         for ax in axs[1:]:
             axs[0].get_shared_y_axes().join(axs[0], ax)
-    fig.suptitle(f"{variable} time series vs. {subject_parameter}",
-        fontsize=FONTSIZE_FIGLABEL)
+    fig.suptitle(
+        f"{variable} time series vs. {subject_parameter}", fontsize=FONTSIZE_FIGLABEL
+    )
     fig.canvas.draw()
     if cbars:
         # Make colorbar width = 12 pt.  The horizontal spacing between subplots will no
@@ -1548,25 +1656,27 @@ def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         # colorbar and its associated subplot.
         for cbar in cbars:
             old_bbox = cbar.ax.get_window_extent().transformed(
-                fig.dpi_scale_trans.inverted())
-            new_bbox = Bbox.from_bounds(old_bbox.x0, old_bbox.y0, 12 / 72,
-                old_bbox.height)
+                fig.dpi_scale_trans.inverted()
+            )
+            new_bbox = Bbox.from_bounds(
+                old_bbox.x0, old_bbox.y0, 12 / 72, old_bbox.height
+            )
             cbar.ax.set_position(
                 new_bbox.transformed(fig.dpi_scale_trans).transformed(
-                    fig.transFigure.inverted()))
+                    fig.transFigure.inverted()
+                )
+            )
     nm = f"timeseries_var_lineplot_-_{variable}_vs_{subject_parameter}.svg"
     fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
 
-def plot_tsvars_line(
-    analysis, cases, named_cases=None
-):
+def plot_tsvars_line(analysis, cases, named_cases=None):
     """One-at-a-time sensitivity line plots for all variables and parameters"""
 
     # TODO: Figure out how to plot parameter sensitivity for multiple variation
     # (parameter interactions)
     for variable in analysis.variables:
         for parameter in analysis.parameters:
-            plot_tsvar_line(analysis, variable, parameter, cases, named_cases=named_cases)
-
-
+            plot_tsvar_line(
+                analysis, variable, parameter, cases, named_cases=named_cases
+            )
