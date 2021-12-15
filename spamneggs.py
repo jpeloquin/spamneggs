@@ -10,6 +10,7 @@ from typing import Callable, Dict, Sequence
 
 # In-house packages
 from lxml import etree
+from pandas import CategoricalDtype, DataFrame
 from sklearn.neighbors import KernelDensity
 
 import febtools as feb
@@ -298,7 +299,7 @@ def cases_table(cases):
             data[case.name][p] = v
         data[case.name]["status"] = None
         data[case.name]["path"] = case.sim_file
-    tab = pd.DataFrame.from_dict(data, orient="index")
+    tab = DataFrame.from_dict(data, orient="index")
     return tab
 
 
@@ -318,6 +319,39 @@ def do_parallel(cases, fun, on_case_error="stop"):
             pool.close()
             break
     return status
+
+
+def expand_run_errors(cases: DataFrame):
+    """Return cases table with run error columns instead of one status column"""
+    errors = defaultdict(lambda: np.zeros(len(cases), dtype=bool))
+    run_status = np.full(len(cases), None)
+    for irow in range(len(cases)):
+        status = cases["status"].iloc[irow]
+        i = status.find(":")
+        phase = status[:i]
+        codes = [s.strip() for s in status[i + 1 :].split(",")]
+        if phase != "Run":
+            run_status[irow] = "No Run"
+        elif "Success" in codes:
+            run_status[irow] = "Success"
+            if len(codes) > 1:
+                raise ValueError(
+                    f"Case {irow}: Run was recorded as successful but additional error codes were present.  The codes were {', '.join(codes)}."
+                )
+        else:
+            run_status[irow] = "Error"
+        for code in codes:
+            if code == "Success":
+                continue
+            errors[code][irow] = True
+    # Return cases table augmented with run status and error columns
+    out = cases.copy()
+    out["Run Status"] = pd.Series(
+        run_status, dtype=CategoricalDtype(["Success", "Error", "No Run"])
+    )
+    for error in errors:
+        out[error] = errors[error]
+    return out, tuple(errors.keys())
 
 
 def gen_case(case):
@@ -587,7 +621,7 @@ def tabulate_analysis_tsvars(analysis, cases):
     # TODO: It would be beneficial to build up the whole-analysis time
     # series table at the same time as case time series tables are
     # written to disk, instead of re-reading everything from disk.
-    analysis_data = pd.DataFrame()
+    analysis_data = DataFrame()
     for i in cases.index:
         pth_tsvars = (
             analysis.directory / "case_output" / f"case={i}_timeseries_vars.csv"
@@ -607,7 +641,7 @@ def tabulate_analysis_tsvars(analysis, cases):
         case_data = {"Case": i, "Step": tsvars["Step"], "Time": tsvars["Time"]}
         case_data.update({f"{p} [param]": cases[p].loc[i] for p in analysis.parameters})
         case_data.update({f"{v} [var]": tsvars[v] for v in analysis.variables})
-        case_data = pd.DataFrame(case_data)
+        case_data = DataFrame(case_data)
         analysis_data = pd.concat([analysis_data, case_data])
     return analysis_data
 
@@ -649,7 +683,7 @@ def tabulate(analysis: Analysis):
             for v in record["instantaneous variables"]:
                 k = f"{v} [var]"
                 ivars_table[k].append(record["instantaneous variables"][v]["value"])
-        df_ivars = pd.DataFrame(ivars_table).set_index("case")
+        df_ivars = DataFrame(ivars_table).set_index("case")
         df_ivars.to_csv(
             analysis.directory / f"{fbase}_cases_-_inst_vars.csv", index=True
         )
@@ -722,36 +756,11 @@ def makefig_sensitivity_all(analysis):
 def makefig_error_counts(analysis):
     """Plot error proportions and correlations"""
     # Collect error counts from cases table
-    tab_cases = pd.read_csv(analysis.directory / f"generated_cases.csv")
-    n = len(tab_cases)
-    error_cases = defaultdict(list)
-    outcome_count = {"No Run": 0, "Error": 0, "Success": 0}
-    for i in range(len(tab_cases)):
-        status = tab_cases["status"].loc[i]
-        idx = status.find(":")
-        phase = status[:idx]
-        if phase != "Run":
-            outcome_count["No Run"] += 1
-            continue
-        codes = [s.strip() for s in status[idx + 1 :].split(",")]
-        if "Success" in codes:
-            outcome_count["Success"] += 1
-            if len(codes) > 1:
-                raise ValueError(
-                    f"Case {i}: Run was recorded as successful but additional error codes were present.  The codes were {', '.join(codes)}."
-                )
-        else:
-            outcome_count["Error"] += 1
-        for code in codes:
-            error_cases[code].append(i)
-    # Count individual error types
-    error_count = {code: len(ids) for code, ids in error_cases.items()}
-    # Create atemporal boolean error variables
-    error_var = {}
-    for err, ids in error_cases.items():
-        error_var[err] = np.zeros(n, dtype=bool)
-        error_var[err][ids] = True
-
+    cases, error_codes = expand_run_errors(
+        pd.read_csv(analysis.directory / f"generated_cases.csv")
+    )
+    outcome_count = dict(cases["Run Status"].value_counts())
+    error_count = {code: cases[code].sum() for code in error_codes}
     # Plot outcome & error counts
     figw = 7.5
     figh = 4
@@ -767,7 +776,7 @@ def makefig_error_counts(analysis):
     ax.bar("Success", outcome_count["Success"], color="black")
     ax.bar("Error", outcome_count["Error"], color="gray")
     ax.bar("No Run", outcome_count["No Run"], color="white", edgecolor="gray")
-    ax.set_ylim(0, n)
+    ax.set_ylim(0, len(cases))
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
     # (2) Error counts
@@ -794,15 +803,14 @@ def makefig_error_counts(analysis):
     figh = 6.0
     fig = Figure(figsize=(figw, figh))
     FigureCanvas(fig)
-    codes = [c for c in sorted(error_count.keys()) if c != "Success"]
-    marginal_p = np.full((len(codes), len(codes)), np.nan)
-    for i in range(len(codes)):
-        for j in range(len(codes)):
+    marginal_p = np.full((len(error_codes), len(error_codes)), np.nan)
+    for i in range(len(error_codes)):
+        for j in range(len(error_codes)):
             if i == j:
                 continue
             marginal_p[i, j] = np.sum(
-                np.logical_and(error_var[codes[i]], error_var[codes[j]])
-            ) / np.sum(error_var[codes[j]])
+                np.logical_and(cases[error_codes[i]], cases[error_codes[j]])
+            ) / np.sum(cases[error_codes[j]])
     ax = fig.add_subplot()
     cmap = mpl.cm.get_cmap("cividis")
     im = ax.matshow(marginal_p, cmap=cmap, origin="upper")
@@ -821,15 +829,15 @@ def makefig_error_counts(analysis):
         )
     # x-tick formatting
     ax.xaxis.tick_bottom()
-    ax.set_xticks([i for i in range(len(codes))])
-    ax.set_xticklabels(codes)
+    ax.set_xticks([i for i in range(len(error_codes))])
+    ax.set_xticklabels(error_codes)
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL)
     for label in ax.get_xticklabels():
         label.set_rotation(28)
         label.set_ha("right")
     # y-tick formatting
-    ax.set_yticks([i for i in range(len(codes))])
-    ax.set_yticklabels(codes)
+    ax.set_yticks([i for i in range(len(error_codes))])
+    ax.set_yticklabels(error_codes)
     ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
     # Colorbar
     cbar = fig.colorbar(im, ax=ax)
@@ -1006,8 +1014,8 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         stem = ""
     else:
         stem = casename + "_"
-    if not isinstance(timeseries, pd.DataFrame):
-        timeseries = pd.DataFrame(timeseries)
+    if not isinstance(timeseries, DataFrame):
+        timeseries = DataFrame(timeseries)
     if len(timeseries) == 0:
         raise ValueError("No values in time series data.")
     nm_xaxis = "Time"
