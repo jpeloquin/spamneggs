@@ -724,6 +724,7 @@ def makefig_sensitivity_all(analysis):
 
     # Plots for errors
     makefig_error_counts(analysis)
+    makefig_error_pdf_uniparam(analysis)
 
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
@@ -845,6 +846,72 @@ def makefig_error_counts(analysis):
     cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
     fig.tight_layout()
     fig.savefig(analysis.directory / "run_error_co-ocurrence.svg")
+
+
+def makefig_error_pdf_uniparam(analysis):
+    """For each parameter write figure with conditional error PDFs"""
+    # TODO: Duplicated with makefig_error_counts
+    cases, error_codes = expand_run_errors(
+        pd.read_csv(analysis.directory / f"generated_cases.csv")
+    )
+    # TODO: Levels information should probably be stored in the analysis object
+    levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
+
+    def p_error(cases, error_code, parameter, levels):
+        p = np.full(len(levels), np.nan)
+        for i, level in enumerate(levels):
+            m = cases[parameter] == level
+            p[i] = np.sum(cases[error_code][m]) / np.sum(m)
+        return p
+
+    # Create figure with probability density function plots
+    fig = Figure(constrained_layout=True)
+    fig.set_constrained_layout_pads(
+        wspace=6 / 72, hspace=6 / 72, w_pad=4 / 72, h_pad=4 / 72
+    )
+    nw = len(analysis.parameters)
+    nh = len(error_codes)
+    fig.set_size_inches((3.5 * nw + 0.25, 3.2 * nh + 0.25))  # TODO: set common style
+    gs = GridSpec(nh, nw, figure=fig)
+    for i, param in enumerate(analysis.parameters):
+        for j, e in enumerate(error_codes):
+            ax = fig.add_subplot(gs[j, i])
+            p = p_error(cases, e, param, levels[param])
+            ax.plot(levels[param], p, "-", color="gray")
+            ax.plot(
+                levels[param],
+                p,
+                linestyle="none",
+                marker="o",
+                color="black",
+                markersize=5,
+            )
+            ax.set_xlabel(param, fontsize=FONTSIZE_AXLABEL)
+            ax.tick_params(
+                axis="x",
+                labelsize=FONTSIZE_TICKLABEL,
+                color="dimgray",
+                labelcolor="dimgray",
+            )
+            ax.set_ylabel(f"P( {e} | {param} )", fontsize=FONTSIZE_AXLABEL)
+            ax.tick_params(
+                axis="y",
+                labelsize=FONTSIZE_TICKLABEL,
+                color="dimgray",
+                labelcolor="dimgray",
+            )
+            ax.set_ylim([0, 1])
+            for k in ax.spines:
+                ax.spines[k].set_visible(False)
+            ax.set_facecolor("#F6F6F6")
+    fig.savefig(analysis.directory / f"run_error_probability_by_one_parameter.svg")
+
+
+            ax.set_ylim([0, 1])
+            for k in ax.spines:
+                ax.spines[k].set_visible(False)
+            ax.set_facecolor("#F6F6F6")
+    fig.savefig(analysis.directory / f"run_error_probability_by_one_parameter.svg")
 
 
 def makefig_sensitivity_ivar_all(
