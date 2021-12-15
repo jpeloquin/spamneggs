@@ -457,7 +457,7 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
                 sys.exit()
     # Tabulate and plot the results
     tabulate(analysis)
-    plot_sensitivity(analysis)
+    makefig_sensitivity_all(analysis)
 
 
 def list_named_cases(analysis):
@@ -568,7 +568,7 @@ def tabulate_case_write(case, dir_out=None):
     timeseries.to_csv(
         dir_out / f"{case.sim_file.stem}_timeseries_vars.csv", index=False
     )
-    plot_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
+    makefig_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
     return record, timeseries
 
 
@@ -655,7 +655,7 @@ def tabulate(analysis: Analysis):
         )
 
 
-def plot_sensitivity(analysis):
+def makefig_sensitivity_all(analysis):
     # Named cases
     pth_cases = analysis.directory / f"named_cases.csv"
     named_cases = pd.read_csv(pth_cases, index_col=0)
@@ -689,7 +689,7 @@ def plot_sensitivity(analysis):
     ]
 
     # Plots for errors
-    make_error_figures(analysis)
+    makefig_error_counts(analysis)
 
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
@@ -707,19 +707,19 @@ def plot_sensitivity(analysis):
             )
             for nm in ivar_names:
                 ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
-        make_sensitivity_ivar_figures(
+        makefig_sensitivity_ivar_all(
             analysis, param_names, param_values, ivar_names, ivar_values
         )
 
     # Plots for time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, cases)
-        make_sensitivity_tsvar_figures(
+        makefig_sensitivity_tsvar_all(
             analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases
         )
 
 
-def make_error_figures(analysis):
+def makefig_error_counts(analysis):
     """Plot error proportions and correlations"""
     # Collect error counts from cases table
     tab_cases = pd.read_csv(analysis.directory / f"generated_cases.csv")
@@ -839,7 +839,7 @@ def make_error_figures(analysis):
     fig.savefig(analysis.directory / "run_error_co-ocurrence.svg")
 
 
-def make_sensitivity_ivar_figures(
+def makefig_sensitivity_ivar_all(
     analysis, param_names, param_values, ivar_names, ivar_values
 ):
     # Matrix of instantaneous variable vs. parameter scatter plots
@@ -914,12 +914,12 @@ def make_sensitivity_ivar_figures(
             fig.savefig(analysis.directory / f"distribution_-_{nm}.svg")
 
 
-def make_sensitivity_tsvar_figures(
+def makefig_sensitivity_tsvar_all(
     analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases=None
 ):
     """Plot sensitivity of each time series variable to each parameter"""
-    plot_tsvars_line(analysis, cases, named_cases)
-    plot_tsvars_pdf(analysis, tsdata, cases, named_cases)
+    makefig_tsvars_line(analysis, cases, named_cases)
+    makefig_tsvars_pdf(analysis, tsdata, cases, named_cases)
     # TODO: The heat map figure should probably indicate which case is
     # plotting as the time series guide.
     if "nominal" in named_cases.index:
@@ -940,10 +940,10 @@ def make_sensitivity_tsvar_figures(
         assert np.sum(m) == 1
         case_id = cases.index[m][0]
         ref_ts = tsdata[tsdata["Case"] == case_id]
-    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none")
-    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="all")
-    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="vector")
-    plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="subvector")
+    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none")
+    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="all")
+    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="vector")
+    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="subvector")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -971,7 +971,7 @@ def write_record_to_json(record, f):
     json.dump(record, f, indent=2, ensure_ascii=False, cls=NDArrayJSONEncoder)
 
 
-def plot_case_tsvar(timeseries, varname, casename=None):
+def makefig_case_tsvar(timeseries, varname, casename=None):
     """Return a line plot of a case's time series variable."""
     step = timeseries["Step"]
     time = timeseries["Time"]
@@ -990,7 +990,7 @@ def plot_case_tsvar(timeseries, varname, casename=None):
     return fig
 
 
-def plot_case_tsvars(timeseries, dir_out, casename=None):
+def makefig_case_tsvars(timeseries, dir_out, casename=None):
     """Plot a case's time series variables and write the plots to disk.
 
     This function is meant for automated sensitivity analysis.  Plots
@@ -1033,11 +1033,11 @@ def plot_case_tsvars(timeseries, dir_out, casename=None):
     plt.close(fig)
     # Produce one small plot for each variable
     for varname in varnames:
-        fig = plot_case_tsvar(timeseries, varname, casename)
+        fig = makefig_case_tsvar(timeseries, varname, casename)
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
-def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6):
+def makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6):
     """Plot times series variable ∝ parameter heat maps.
 
     norm := "none", "all", "vector", or "individual".  Type of color
@@ -1415,8 +1415,8 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     ## Resize the canvas
     fig_w = fig_w + Δw_in
     fig.set_size_inches(fig_w, fig_h)
-    ## Re-apply the axes sizes, which will have changed because they are
-    ## stored in figure units
+    ## Re-apply the axes sizes, which will have changed because they are stored in
+    ## figure units
     pos_main_in[0] += Δw_in
     pos_cbar_in[0] += Δw_in
     ax.set_position(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
@@ -1424,124 +1424,49 @@ def plot_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1
     fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg", dpi=300)
 
 
-def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
-    """Plot time series variable for named cases into an axes"""
-    ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
-    ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
-    ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
-    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-    for i, case_id in enumerate(named_cases.index):
-        record, tab_timeseries = read_case_data(
-            analysis.directory / named_cases.loc[case_id, "path"]
-        )
-        value = named_cases[parameter].loc[case_id]
-        units = analysis.parameters[parameter].units
-        if units == "1":
-            label = f"{case_id}; {parameter} = {value}"
-        else:
-            label = f"{case_id}; {parameter} = {value} {units}"
-        ax.plot(
-            tab_timeseries["Step"],
-            tab_timeseries[variable],
-            label=label,
-            color=colors.categorical_n7[i % len(colors.categorical_n7)],
-        )
-    ax.legend()
-
-
-def plot_tsvar_pdf(analysis, tsdata, variable, parameter, cases, named_cases=None):
-    # Collect parameter names and levels
-    subject_parameter = parameter
-    # TODO: Levels information should probably be stored in the analysis object
-    levels = sorted(np.unique(cases[subject_parameter]))
-    # Collect key statistics.  These will be used for adjusting the range of the
-    # probability density plot.
-    vmin = tsdata[f"{variable} [var]"].min()
-    vmax = tsdata[f"{variable} [var]"].max()
-    # Calculate the number of subplots
-    n_plots = len(levels) + 1 if named_cases is not None else len(levels)
-    # Create figure
-    fig = Figure(constrained_layout=True)
-    nh = math.floor(n_plots ** 0.5)
-    nw = math.ceil(n_plots / nh)
-    fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
-    fig.set_constrained_layout_pads(
-        wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
-    )
-    gs = GridSpec(nh, nw, figure=fig)
-    axs = []
-    # Plot the named case(s)
-    # TODO: This is duplicated with plot_tsvar_line
-    if named_cases is not None:
-        ax = fig.add_subplot(gs[-1, -1])
-        axs.append(ax)
-        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
-    # Plot the time series variable's probability density for each level of the
-    # subject parameter
-    by_case = tsdata.set_index(["Case", "Step"])
-    for i, level in enumerate(levels):
-        cases_idx = cases[cases[parameter] == level].index
-        stratum = by_case.loc[cases_idx, :].swaplevel()
-        x = np.linspace(vmin, vmax, 100)
-        n_times = len(stratum.index.levels[0])
-        p = np.full((len(x), n_times), np.nan)
-        for step in stratum.index.levels[0]:
-            v = stratum.loc[step, :][f"{variable} [var]"].array
-            # Use sklearn.neighbors.KernelDensity because it's robust to zero
-            # variance.  scipy.stats.gaussian_kde is not; it tries to invert a matrix
-            # that will be singular if all observations have the same value.  Note
-            # that sklearn wants 2D arrays; index 0 across observations and index 1
-            # across features.
-            kde = KernelDensity(
-                kernel="gaussian", bandwidth=(vmax - vmin) / len(x)
-            ).fit(v[:, None])
-            p[:, step] = np.exp(kde.score_samples(x[:, None]))
-        # Plot the probability density heatmap
-        ax = fig.add_subplot(gs[(i + 1) // nw, i % nw])
-        axs.append(ax)
-        cmap = mpl.cm.get_cmap("cividis")
-        im = ax.imshow(
-            np.atleast_2d(p),
-            aspect="auto",
-            origin="lower",
-            interpolation="nearest",
-            cmap=cmap,
-            extent=(-0.5, n_times + 0.5, vmin, vmax)
-        )
-        cbar = fig.colorbar(im)
-        cbar.set_label("Probability Density [1]", fontsize=FONTSIZE_TICKLABEL)
-        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-        # Labels
-        units = analysis.parameters[subject_parameter].units
-        s_level = f"{level}" if units == "1" else f"{level} {units}"
-        ax.set_title(
-            f"{subject_parameter} = {s_level}",
-            fontsize=FONTSIZE_AXLABEL,
-        )
-        ax.set_xlabel("Time point [1]")
-        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-        # TODO: Units-awareness for variables
-        ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
-        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-    # Finalize the figure
-    fig.suptitle(
-        f"{variable} time series vs. {subject_parameter}", fontsize=FONTSIZE_FIGLABEL
-    )
-    fig.canvas.draw()
-    nm = f"timeseries_var_pdf_-_{variable}_vs_{subject_parameter}.svg"
-    fig.savefig(analysis.directory / nm.replace(" ", "_"))
-
-
-def plot_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
+def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
+    tsdata_by_step = tsdata.set_index("Step")
     for variable in analysis.variables:
         for parameter in analysis.parameters:
-            plot_tsvar_pdf(
-                analysis, tsdata, variable, parameter, cases, named_cases=named_cases
+            # Collect key quantiles.  These will be used for adjusting the range of
+            # the probability density plot.
+            vmin = tsdata[f"{variable} [var]"].min()
+            vmax = tsdata[f"{variable} [var]"].max()
+            yrange_all = (vmin, vmax)
+            idx_steps = tsdata["Step"].unique()
+            quantile_levels = (0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+            quantiles = tuple([] for q in quantile_levels)
+            for idx_step in idx_steps:
+                v = tsdata_by_step.loc[idx_step, f"{variable} [var]"]
+                for i, q in enumerate(v.quantile(quantile_levels).values):
+                    quantiles[i].append(q)
+            yrange_trim90 = (min(quantiles[1]), max(quantiles[-2]))
+            yrange_trim75 = (min(quantiles[2]), max(quantiles[-3]))
+            # Make the figures
+            nm = f"timeseries_var_pdf_-_range=all_-_{variable}_vs_{parameter}.svg".replace(
+                " ", "_"
             )
+            fig, axs = fig_tsvar_pdf(
+                analysis, tsdata, variable, yrange_all, parameter, cases, named_cases
+            )
+            fig.savefig(analysis.directory / nm)
+            nm = f"timeseries_var_pdf_-_range=90percent_-_{variable}_vs_{parameter}.svg".replace(
+                " ", "_"
+            )
+            fig, axs = fig_tsvar_pdf(
+                analysis, tsdata, variable, yrange_trim90, parameter, cases, named_cases
+            )
+            fig.savefig(analysis.directory / nm)
+            nm = f"timeseries_var_pdf_-_range=75percent_-_{variable}_vs_{parameter}.svg".replace(
+                " ", "_"
+            )
+            fig, axs = fig_tsvar_pdf(
+                analysis, tsdata, variable, yrange_trim75, parameter, cases, named_cases
+            )
+            fig.savefig(analysis.directory / nm)
 
 
-def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
+def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     """One-at-a-time time series variable sensitivity line plots for one parameter
 
     The inputs include a set of a parameters, one of which is chosen as the
@@ -1670,13 +1595,118 @@ def plot_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
 
-def plot_tsvars_line(analysis, cases, named_cases=None):
+def makefig_tsvars_line(analysis, cases, named_cases=None):
     """One-at-a-time sensitivity line plots for all variables and parameters"""
 
     # TODO: Figure out how to plot parameter sensitivity for multiple variation
     # (parameter interactions)
     for variable in analysis.variables:
         for parameter in analysis.parameters:
-            plot_tsvar_line(
+            makefig_tsvar_line(
                 analysis, variable, parameter, cases, named_cases=named_cases
             )
+
+
+def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
+    """Plot time series variable for named cases into an axes"""
+    ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
+    ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    for i, case_id in enumerate(named_cases.index):
+        record, tab_timeseries = read_case_data(
+            analysis.directory / named_cases.loc[case_id, "path"]
+        )
+        value = named_cases[parameter].loc[case_id]
+        units = analysis.parameters[parameter].units
+        if units == "1":
+            label = f"{case_id}; {parameter} = {value}"
+        else:
+            label = f"{case_id}; {parameter} = {value} {units}"
+        ax.plot(
+            tab_timeseries["Step"],
+            tab_timeseries[variable],
+            label=label,
+            color=colors.categorical_n7[i % len(colors.categorical_n7)],
+        )
+    ax.legend()
+
+
+def fig_tsvar_pdf(
+    analysis, tsdata, variable, vrange, parameter, cases, named_cases=None
+):
+    """Plot probability density of a time series variable into an axes"""
+    # TODO: Levels information should probably be stored in the analysis object
+    levels = sorted(np.unique(cases[parameter]))
+    x = np.linspace(vrange[0], vrange[1], 100)
+    steps = tsdata["Step"].unique()
+    # Calculate the number of subplots
+    n_plots = len(levels) + 1 if named_cases is not None else len(levels)
+    nh = math.floor(n_plots ** 0.5)
+    nw = math.ceil(n_plots / nh)
+    # Create figure
+    fig = Figure(constrained_layout=True)
+    fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
+    fig.set_constrained_layout_pads(
+        wspace=0.04, hspace=0.04, w_pad=2 / 72, h_pad=2 / 72
+    )
+    gs = GridSpec(nh, nw, figure=fig)
+    axs = []
+    # Plot the named case(s)
+    # TODO: This is duplicated with makefig_tsvar_line
+    if named_cases is not None:
+        ax = fig.add_subplot(gs[-1, -1])
+        axs.append(ax)
+        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
+        ax.set_ylim([vrange[0], vrange[1]])
+    # For each level of the subject parameter, plot the time series variable's
+    # probability density
+    tsdata_by_case = tsdata.set_index("Case")
+    for i, level in enumerate(levels):
+        ax = fig.add_subplot(gs[(i + 1) // nw, i % nw])
+        axs.append(ax)
+        stratum = (
+            tsdata.set_index("Case")
+            .loc[cases[cases[parameter] == level].index]
+            .reset_index()
+        ).set_index("Step")
+        p = np.full((len(x), len(steps)), np.nan)
+        for step in steps:
+            v = stratum.loc[step][f"{variable} [var]"].array
+            # Use sklearn.neighbors.KernelDensity because it's robust to zero
+            # variance.  scipy.stats.gaussian_kde is not; it tries to invert a matrix
+            # that will be singular if all observations have the same value.  Note
+            # that sklearn wants 2D arrays; index 0 across observations and index 1
+            # across features.
+            kde = KernelDensity(
+                kernel="gaussian", bandwidth=(vrange[1] - vrange[0]) / len(x)
+            ).fit(v[:, None])
+            p[:, step] = np.exp(kde.score_samples(x[:, None]))
+        cmap = mpl.cm.get_cmap("cividis")
+        im = ax.imshow(
+            np.atleast_2d(p),
+            aspect="auto",
+            origin="lower",
+            interpolation="nearest",
+            cmap=cmap,
+            extent=(-0.5, len(steps) + 0.5, vrange[0], vrange[1]),
+        )
+        cbar = fig.colorbar(im)
+        cbar.set_label("Probability Density [1]", fontsize=FONTSIZE_TICKLABEL)
+        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+        # Labels
+        units = analysis.parameters[parameter].units
+        s_level = f"{level}" if units == "1" else f"{level} {units}"
+        ax.set_title(
+            f"{parameter} = {s_level}",
+            fontsize=FONTSIZE_AXLABEL,
+        )
+        ax.set_xlabel("Time point [1]")
+        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+        # TODO: Units-awareness for variables
+        ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
+        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    # Finalize the figure
+    fig.suptitle(f"{variable} time series vs. {parameter}", fontsize=FONTSIZE_FIGLABEL)
+    return fig, axs
