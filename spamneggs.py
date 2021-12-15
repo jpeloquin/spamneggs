@@ -725,6 +725,7 @@ def makefig_sensitivity_all(analysis):
     # Plots for errors
     makefig_error_counts(analysis)
     makefig_error_pdf_uniparam(analysis)
+    makefig_error_pdf_biparam(analysis)
 
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
@@ -904,14 +905,76 @@ def makefig_error_pdf_uniparam(analysis):
             for k in ax.spines:
                 ax.spines[k].set_visible(False)
             ax.set_facecolor("#F6F6F6")
-    fig.savefig(analysis.directory / f"run_error_probability_by_one_parameter.svg")
+    fig.savefig(analysis.directory / f"run_error_probability_uniparameter.svg")
 
 
-            ax.set_ylim([0, 1])
-            for k in ax.spines:
-                ax.spines[k].set_visible(False)
-            ax.set_facecolor("#F6F6F6")
-    fig.savefig(analysis.directory / f"run_error_probability_by_one_parameter.svg")
+def makefig_error_pdf_biparam(analysis):
+    """For each parameter pair write figure with conditional error PDFs"""
+    # TODO: Duplicated with makefig_error_counts
+    cases, error_codes = expand_run_errors(
+        pd.read_csv(analysis.directory / f"generated_cases.csv")
+    )
+    # TODO: Levels information should probably be stored in the analysis object
+    levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
+
+    def p_error(cases, error_code, parameter1, levels1, parameter2, levels2):
+        """Return p(error | parameter1, parameter2)"""
+        p = np.full((len(levels1), len(levels2)), np.nan)
+        x = np.full((len(levels1), len(levels2), 2), np.nan)
+        for i, level1 in enumerate(levels1):
+            for j, level2 in enumerate(levels2):
+                m = np.logical_and(
+                    cases[parameter1] == level1, cases[parameter2] == level2
+                )
+                x[i, j, :] = (levels1[i], levels2[i])
+                n = np.sum(m)
+                if n == 0:
+                    p[i, j] = np.nan
+                else:
+                    p[i, j] = np.sum(cases[error_code][m]) / n
+        return x, p
+
+    for e in error_codes:
+        # Create figure with probability density function plots
+        fig = Figure(constrained_layout=True)
+        fig.set_constrained_layout_pads(
+            wspace=2 / 72, hspace=2 / 72, w_pad=2 / 72, h_pad=2 / 72
+        )
+        nw = len(analysis.parameters)
+        nh = len(analysis.parameters)
+        fig.set_size_inches((3.4 * nw + 0.25, 2.5 * nh + 0.25))  # TODO: set common style
+        gs = GridSpec(nh, nw, figure=fig)
+        for j, p1 in enumerate(analysis.parameters):  # columns
+            for i, p2 in enumerate(analysis.parameters):  # rows
+                ax = fig.add_subplot(gs[i, j])
+                x, p = p_error(cases, e, p1, levels[p1], p2, levels[p2])
+                # warning: pcolormesh maps i → y and j → x
+                pcm = ax.pcolormesh(levels[p1], levels[p2], p.T, shading="nearest", cmap="cividis",
+                                    vmin=0, vmax=1)
+                # TODO: Place colorbar manually; it seems that doing it automatically
+                #  is slow
+                cbar = fig.colorbar(pcm, ax=ax)
+                cbar.set_label(f"P( {e} )", fontsize=FONTSIZE_TICKLABEL)
+                cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+                ax.set_xlim(levels[p1])
+                ax.set_xlabel(p1, fontsize=FONTSIZE_AXLABEL)
+                ax.tick_params(
+                    axis="x",
+                    labelsize=FONTSIZE_TICKLABEL,
+                    color="dimgray",
+                    labelcolor="dimgray",
+                )
+                ax.set_ylim(levels[p2])
+                ax.set_ylabel(p2, fontsize=FONTSIZE_AXLABEL)
+                ax.tick_params(
+                    axis="y",
+                    labelsize=FONTSIZE_TICKLABEL,
+                    color="dimgray",
+                    labelcolor="dimgray",
+                )
+                # for k in ax.spines:
+                #     ax.spines[k].set_visible(False)
+        fig.savefig(analysis.directory / f"run_error_probability_biparameter_-_error={e}.svg")
 
 
 def makefig_sensitivity_ivar_all(
