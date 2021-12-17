@@ -956,7 +956,7 @@ def makefig_error_pdf_biparam(analysis):
                 cbar = fig.colorbar(pcm, ax=ax)
                 cbar.set_label(f"P( {e} )", fontsize=FONTSIZE_TICKLABEL)
                 cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-                ax.set_xlim(levels[p1])
+                ax.set_xlim(levels[p1][0], levels[p1][-1])
                 ax.set_xlabel(p1, fontsize=FONTSIZE_AXLABEL)
                 ax.tick_params(
                     axis="x",
@@ -964,7 +964,7 @@ def makefig_error_pdf_biparam(analysis):
                     color="dimgray",
                     labelcolor="dimgray",
                 )
-                ax.set_ylim(levels[p2])
+                ax.set_ylim(levels[p2][0], levels[p2][-1])
                 ax.set_ylabel(p2, fontsize=FONTSIZE_AXLABEL)
                 ax.tick_params(
                     axis="y",
