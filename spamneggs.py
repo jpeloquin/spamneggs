@@ -1802,7 +1802,7 @@ def fig_tsvar_pdf(
     # probability density
     tsdata_by_case = tsdata.set_index("Case")
     for i, level in enumerate(levels):
-        ax = fig.add_subplot(gs[(i + 1) // nw, i % nw])
+        ax = fig.add_subplot(gs[i // nw, i % nw])
         axs.append(ax)
         stratum = (
             tsdata.set_index("Case")
