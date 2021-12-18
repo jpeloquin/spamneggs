@@ -1187,7 +1187,7 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
 
 
 def makefig_sensitivity_tsvars_corrmap(
-    analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6
+    analysis, tsdata, ref_ts, norm="none", cov_zero_thresh=COV_ZERO_THRESH
 ):
     """Plot times series variable ∝ parameter heat maps.
 
@@ -1235,8 +1235,8 @@ def makefig_sensitivity_tsvars_corrmap(
                 # Coerce correlation to zero if it is nan only because
                 # the output variable has practically no variance
                 if np.isnan(ρ) and (
-                    cov[vnm][pnm] <= COV_ZERO_THRESH
-                    and cov[vnm][vnm] <= COV_ZERO_THRESH
+                    cov[vnm][pnm] <= cov_zero_thresh
+                    and cov[vnm][vnm] <= cov_zero_thresh
                 ):
                     ρ = 0
                 sensitivity_vectors[vi][i][pi] = ρ
