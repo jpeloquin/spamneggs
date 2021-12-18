@@ -1089,10 +1089,10 @@ def makefig_sensitivity_tsvar_all(
         assert np.sum(m) == 1
         case_id = cases.index[m][0]
         ref_ts = tsdata[tsdata["Case"] == case_id]
-    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none")
-    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="all")
-    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="vector")
-    makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="subvector")
+    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="none")
+    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="all")
+    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="vector")
+    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="subvector")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -1186,7 +1186,9 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
-def makefig_tsvars_heat_map(analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6):
+def makefig_sensitivity_tsvars_corrmap(
+    analysis, tsdata, ref_ts, norm="none", corr_threshold=1e-6
+):
     """Plot times series variable ∝ parameter heat maps.
 
     norm := "none", "all", "vector", or "individual".  Type of color
