@@ -942,15 +942,24 @@ def makefig_error_pdf_biparam(analysis):
         )
         nw = len(analysis.parameters)
         nh = len(analysis.parameters)
-        fig.set_size_inches((3.4 * nw + 0.25, 2.5 * nh + 0.25))  # TODO: set common style
+        fig.set_size_inches(
+            (3.4 * nw + 0.25, 2.5 * nh + 0.25)
+        )  # TODO: set common style
         gs = GridSpec(nh, nw, figure=fig)
         for j, p1 in enumerate(analysis.parameters):  # columns
             for i, p2 in enumerate(analysis.parameters):  # rows
                 ax = fig.add_subplot(gs[i, j])
                 x, p = p_error(cases, e, p1, levels[p1], p2, levels[p2])
                 # warning: pcolormesh maps i → y and j → x
-                pcm = ax.pcolormesh(levels[p1], levels[p2], p.T, shading="nearest", cmap="cividis",
-                                    vmin=0, vmax=1)
+                pcm = ax.pcolormesh(
+                    levels[p1],
+                    levels[p2],
+                    p.T,
+                    shading="nearest",
+                    cmap="cividis",
+                    vmin=0,
+                    vmax=1,
+                )
                 # TODO: Place colorbar manually; it seems that doing it automatically
                 #  is slow
                 cbar = fig.colorbar(pcm, ax=ax)
@@ -974,7 +983,9 @@ def makefig_error_pdf_biparam(analysis):
                 )
                 # for k in ax.spines:
                 #     ax.spines[k].set_visible(False)
-        fig.savefig(analysis.directory / f"run_error_probability_biparameter_-_error={e}.svg")
+        fig.savefig(
+            analysis.directory / f"run_error_probability_biparameter_-_error={e}.svg"
+        )
 
 
 def makefig_sensitivity_ivar_all(
@@ -1805,9 +1816,7 @@ def fig_tsvar_pdf(
         ax = fig.add_subplot(gs[i // nw, i % nw])
         axs.append(ax)
         stratum = (
-            tsdata.set_index("Case")
-            .loc[cases[cases[parameter] == level].index]
-            .reset_index()
+            tsdata_by_case.loc[cases[cases[parameter] == level].index].reset_index()
         ).set_index("Step")
         p = np.full((len(x), len(steps)), np.nan)
         for step in steps:
