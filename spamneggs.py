@@ -689,6 +689,43 @@ def tabulate(analysis: Analysis):
         )
 
 
+def tab_tsvars_corrmap(analysis, tsdata, cov_zero_thresh=COV_ZERO_THRESH):
+    """Return table of time series vs. parameter correlation vectors"""
+    tsdata = tsdata.copy().reset_index().set_index("Step")
+    # Calculate sensitivity vectors
+    ntimes = len(tsdata.index.unique())  # number of time points
+    sensitivity_vectors = {
+        (p, v): np.zeros(ntimes)
+        for p in analysis.parameters
+        for v in analysis.variables
+    }
+    for v in analysis.variables:
+        if np.any(np.isnan(tsdata[f"{v} [var]"])):
+            raise ValueError(f"NaNs detected in values for {v}.")
+    for i in range(ntimes):
+        for pnm in analysis.parameters:
+            for vnm in analysis.variables:
+                p = tsdata.loc[i][f"{pnm} [param]"]
+                v = tsdata.loc[i][f"{vnm} [var]"]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ρ = np.corrcoef(p, v)[0, 1]
+                cov = np.cov(p, v)
+                if np.isnan(ρ) and (
+                    cov[0, 1] <= cov_zero_thresh and cov[1, 1] <= cov_zero_thresh
+                ):
+                    # Coerce correlation to zero if it is nan only because the output
+                    # variable has practically no variance
+                    sensitivity_vectors[(pnm, vnm)][i] = 0
+                else:
+                    sensitivity_vectors[(pnm, vnm)][i] = ρ
+    out = DataFrame(sensitivity_vectors).stack()
+    out.index.set_names(["Time Point", "Variable"], inplace=True)
+    out = out.melt(
+        ignore_index=False, var_name="Parameter", value_name="Correlation Coefficient"
+    ).reset_index()
+    return out
+
+
 def makefig_sensitivity_all(analysis):
     # Named cases
     pth_cases = analysis.directory / f"named_cases.csv"
@@ -1089,10 +1126,18 @@ def makefig_sensitivity_tsvar_all(
         assert np.sum(m) == 1
         case_id = cases.index[m][0]
         ref_ts = tsdata[tsdata["Case"] == case_id]
-    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="none")
-    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="all")
-    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="vector")
-    makefig_sensitivity_tsvars_corrmap(analysis, tsdata, ref_ts, norm="subvector")
+    correlations_table = tab_tsvars_corrmap(analysis, tsdata)
+    correlations_table.to_feather(analysis.directory / f"sensitivity_vectors.feather")
+    makefig_sensitivity_tsvars_heatmap(
+        analysis, correlations_table, ref_ts, norm="none"
+    )
+    makefig_sensitivity_tsvars_heatmap(analysis, correlations_table, ref_ts, norm="all")
+    makefig_sensitivity_tsvars_heatmap(
+        analysis, correlations_table, ref_ts, norm="vector"
+    )
+    makefig_sensitivity_tsvars_heatmap(
+        analysis, correlations_table, ref_ts, norm="subvector"
+    )
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -1186,8 +1231,8 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
-def makefig_sensitivity_tsvars_corrmap(
-    analysis, tsdata, ref_ts, norm="none", cov_zero_thresh=COV_ZERO_THRESH
+def makefig_sensitivity_tsvars_heatmap(
+    analysis, correlations, ref_ts, norm="none", cov_zero_thresh=COV_ZERO_THRESH
 ):
     """Plot times series variable ∝ parameter heat maps.
 
@@ -1209,37 +1254,9 @@ def makefig_sensitivity_tsvars_corrmap(
           maximum of the subvector corresponding to the pair.
 
     """
-    # Data munging
-    params = [c for c in tsdata.columns if c.endswith(" [param]")]
-    varnames = [c for c in tsdata.columns if c.endswith(" [var]")]
-    # ^ These names are tagged with their type to avoid name collisions.
-    data = tsdata.copy()  # need to mutate the table
-    data = data.drop("Time", axis=1).set_index(["Step", "Case"])
-
-    # Calculate sensitivity vectors
-    n = len(data.index.levels[0])  # number of time points
-    sensitivity_vectors = np.zeros((len(varnames), n, len(params)))
-    for i in range(n):
-        values = data.loc[i][params + varnames]
-        if np.any(np.isnan(values)):
-            raise ValueError(
-                "NaNs detected in output variables' values.  Aborting "
-                "plots of sensitivity heat maps because the distance "
-                "vector calculations will propagate the NaNs."
-            )
-        corr = values.corr()
-        cov = values.cov()
-        for pi, pnm in enumerate(params):
-            for vi, vnm in enumerate(varnames):
-                ρ = corr[pnm][vnm]
-                # Coerce correlation to zero if it is nan only because
-                # the output variable has practically no variance
-                if np.isnan(ρ) and (
-                    cov[vnm][pnm] <= cov_zero_thresh
-                    and cov[vnm][vnm] <= cov_zero_thresh
-                ):
-                    ρ = 0
-                sensitivity_vectors[vi][i][pi] = ρ
+    correlations = correlations.copy().set_index(
+        ["Parameter", "Variable", "Time Point"]
+    )
 
     # Plot the heatmap
     lh = 1.5  # multiple of font size to use for label height
@@ -1247,7 +1264,7 @@ def makefig_sensitivity_tsvars_corrmap(
     # Calculate widths of figure elements.  TODO: It would be better to
     # specify the /figure/ width, then calculate the necessary axes
     # widths.
-    dendro_axw = 12 / 72 * len(params)
+    dendro_axw = 12 / 72 * len(analysis.parameters)
     fig_llabelw = lh * FONTSIZE_FIGLABEL / 72
     dendro_areaw = fig_llabelw + dendro_axw
     cbar_axw = 12 / 72
@@ -1264,14 +1281,16 @@ def makefig_sensitivity_tsvars_corrmap(
     hmap_subw = hmap_lpad + hmap_axw + cbar_lpad + cbar_axw + cbar_rpad
     hmap_subwspace = FONTSIZE_AXLABEL / 72
     hmap_subw = 4.5
-    hmap_areaw = hmap_subw * len(varnames) + hmap_subwspace * (len(varnames) - 1)
+    hmap_areaw = hmap_subw * len(analysis.variables) + hmap_subwspace * (
+        len(analysis.variables) - 1
+    )
     if norm in ("none", "all", "vector"):
-        right_cbar = True
+        # right_cbar = True
         rcbar_areaw = cbar_areaw
         rcbar_wspace = hmap_subwspace
         hmap_axw = hmap_subw - hmap_lpad
     else:  # norm == "individual"
-        right_cbar = False
+        # right_cbar = False
         rcbar_areaw = 0
         rcbar_wspace = 0
         hmap_axw = hmap_subw - hmap_lpad - cbar_areaw
@@ -1285,7 +1304,7 @@ def makefig_sensitivity_tsvars_corrmap(
     # ^ height allocated for each axes
     hmap_vspace = (lh + 0.5) * FONTSIZE_TICKLABEL / 72
     # ^ height allocated for x-axis tick labels, per axes
-    nh = len(params) + 1
+    nh = len(analysis.parameters) + 1
     # ^ number of axes high; the +1 is for a time series line plot
     figh = hmap_blabelh + (hmap_vspace + hmap_axh) * nh + hmap_tlabelh + fig_tlabelh
 
@@ -1299,15 +1318,20 @@ def makefig_sensitivity_tsvars_corrmap(
     # ^ bottom coord of heatmap area, positioned such that vertical
     # center of heatmap axes will line up with the dendrogram ticks
     hmapaxes_b0 = hmap_areab + 0.5 * hmap_vspace
-    hmapaxes_t0 = hmapaxes_b0 + (len(params) - 1) * hmap_vspace + len(params) * hmap_axh
+    hmapaxes_t0 = (
+        hmapaxes_b0
+        + (len(analysis.parameters) - 1) * hmap_vspace
+        + len(analysis.parameters) * hmap_axh
+    )
 
     # Plot dendrogram
     b = hmap_blabelh + 0.5 * hmap_vspace
-    h = (hmap_vspace + hmap_axh) * len(params)
+    h = (hmap_vspace + hmap_axh) * len(analysis.parameters)
     dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
-    arr = np.concatenate(sensitivity_vectors, axis=0).T
-    # ^ first index over parameters, second over timepoints
-    #
+    by_parameter = correlations.unstack(["Variable", "Time Point"])
+    arr = by_parameter.values
+    # ^ first index over parameters, second over variables and time points
+    arr_parameters = list(by_parameter.index)
     # Compute unsigned Pearson correlation distance = 1 - | ρ | where
     # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
     # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
@@ -1354,13 +1378,13 @@ def makefig_sensitivity_tsvars_corrmap(
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
 
     # Draw the time series line plot in the first row
-    for ivar, varname in enumerate(varnames):
+    for ivar, varname in enumerate(analysis.variables):
         l = hmap_areal + ivar * (hmap_subw + hmap_subwspace) + hmap_lpad
         w = hmap_axw
-        b = hmapaxes_b0 + len(params) * (hmap_vspace + hmap_axh)
+        b = hmapaxes_b0 + len(analysis.parameters) * (hmap_vspace + hmap_axh)
         h = hmap_axh
         ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2")
-        ax.plot(ref_ts["Step"], ref_ts[varname], color="k")
+        ax.plot(ref_ts["Step"], ref_ts[f"{varname} [var]"], color="k")
         # Set the axes limits to the min and max of the data, to match
         # the axes limits used for the heatmap images.
         ax.set_xlim(min(ref_ts["Step"]), max(ref_ts["Step"]))
@@ -1381,15 +1405,16 @@ def makefig_sensitivity_tsvars_corrmap(
         absmax = 1
         cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
     elif norm == "all":
-        absmax = np.max(np.abs(sensitivity_vectors))
+        absmax = np.max(np.abs(correlations.values))
         cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
     for irow, iparam in enumerate(reversed(dn["leaves"])):
+        parameter = arr_parameters[iparam]
         if norm == "vector":
-            absmax = np.max(np.abs(sensitivity_vectors[:, :, iparam]))
+            absmax = np.max(np.abs(correlations.loc[parameter].values))
             cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
-        for ivar, varname in enumerate(varnames):
+        for ivar, varname in enumerate(analysis.variables):
             if norm == "subvector":
-                absmax = np.max(np.abs(sensitivity_vectors[ivar, :, iparam]))
+                absmax = np.max(np.abs(correlations.loc[parameter, varname].values))
                 cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
 
             # Calculate bounding box for heatmap and colorbar axes.
@@ -1411,17 +1436,17 @@ def makefig_sensitivity_tsvars_corrmap(
             h = hmap_axh
             ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
             # Image
-            ρ = sensitivity_vectors[ivar, :, iparam]
+            ρ = correlations.loc[parameter, varname].values.T
             im = ax.imshow(
-                np.atleast_2d(ρ),
+                ρ,
                 aspect="auto",
                 origin="upper",
                 interpolation="nearest",
                 cmap=CMAP_DIVERGE,
                 norm=cnorm,
                 extent=(
-                    tsdata["Step"].iloc[0] - 0.5,
-                    tsdata["Step"].iloc[-1] + 0.5,
+                    ref_ts["Step"].iloc[0] - 0.5,
+                    ref_ts["Step"].iloc[-1] + 0.5,
                     -0.5,
                     0.5,
                 ),
@@ -1429,7 +1454,10 @@ def makefig_sensitivity_tsvars_corrmap(
             # Labels
             ax.xaxis.set_major_locator(tick_locator)
             ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-            ax.set_ylabel(params[iparam].rstrip(" [param]"), fontsize=FONTSIZE_AXLABEL)
+            ax.set_ylabel(
+                parameter,
+                fontsize=FONTSIZE_AXLABEL,
+            )
             ax.tick_params(axis="y", left=False, labelleft=False)
             if irow == 0:
                 ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_TICKLABEL)
@@ -1446,7 +1474,7 @@ def makefig_sensitivity_tsvars_corrmap(
                 cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
                 cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
                 cbar.ax.yaxis.set_label_coords(2.7, 0.5)
-            elif norm == "vector" and ivar == len(varnames) - 1:
+            elif norm == "vector" and ivar == len(analysis.variables) - 1:
                 l = dendro_areaw + hmap_areaw + rcbar_wspace
                 b = hmapaxes_b0 + irow * (hmap_vspace + hmap_axh)
                 w = cbar_axw
@@ -1522,7 +1550,12 @@ def makefig_sensitivity_tsvars_corrmap(
         cmap=cmap,
         norm=cnorm,
         origin="upper",
-        extent=(-0.5, len(params) - 0.5, -0.5, len(params) - 0.5),
+        extent=(
+            -0.5,
+            len(analysis.parameters) - 0.5,
+            -0.5,
+            len(analysis.parameters) - 0.5,
+        ),
     )
     # Write the value of each cell as text
     for (i, j), d in np.ndenumerate(np.flipud(dist)):
@@ -1549,12 +1582,16 @@ def makefig_sensitivity_tsvars_corrmap(
     cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
     ax.set_title("Sensitivity vector distance matrix", fontsize=FONTSIZE_FIGLABEL)
     ax.set_xticks(
-        [i for i in range(len(params))],
+        [i for i in range(len(analysis.parameters))],
     )
-    ax.set_yticks([i for i in reversed(range(len(params)))])
+    ax.set_yticks([i for i in reversed(range(len(analysis.parameters)))])
     # ^ reversed b/c origin="upper"
-    ax.set_xticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
-    ax.set_yticklabels([params[i].rstrip(" [param]") for i in dn["leaves"]])
+    ax.set_xticklabels(
+        [arr_parameters[i] for i in dn["leaves"]]
+    )
+    ax.set_yticklabels(
+        [arr_parameters[i] for i in dn["leaves"]]
+    )
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
     ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
     #
