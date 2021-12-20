@@ -50,6 +50,7 @@ CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
 FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
+COLOR_DEEMPH = "dimgray"
 
 
 class CaseGenerationError(Exception):
@@ -1106,8 +1107,9 @@ def makefig_sensitivity_tsvar_all(
     """Plot sensitivity of each time series variable to each parameter"""
     makefig_tsvars_line(analysis, cases, named_cases)
     makefig_tsvars_pdf(analysis, tsdata, cases, named_cases)
+    # Obtain reference case
     # TODO: The heat map figure should probably indicate which case is
-    # plotting as the time series guide.
+    # plotted as the time series guide.
     if "nominal" in named_cases.index:
         # Plot nominal case
         pth = analysis.directory / named_cases.loc["nominal", "path"]
@@ -1138,6 +1140,39 @@ def makefig_sensitivity_tsvar_all(
     makefig_sensitivity_tsvars_heatmap(
         analysis, correlations_table, ref_ts, norm="subvector"
     )
+    # Estimate the rank of the sensitivity vectors
+    correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
+    arr = correlations.unstack(["Variable", "Time Point"]).values
+    u, s, vh = np.linalg.svd(arr.T)
+    stats = {"singular values": s.tolist()}
+    with open(analysis.directory / "sensitivity_ρ_stats.json", "w") as f:
+        json.dump(stats, f)
+    fig = Figure()
+    # Plot the singular values for the sensitivity vectors
+    fig.set_size_inches((4, 3))  # TODO: set smart size
+    FigureCanvas(fig)
+    ax = fig.add_subplot()
+    x = 1 + np.arange(len(s))
+    ax.bar(x, s)
+    for k in ax.spines:
+        ax.spines[k].set_visible(False)
+    ax.set_xlabel("Eigenvector", fontsize=FONTSIZE_AXLABEL)
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax.tick_params(
+        axis="x",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    ax.set_ylabel("Eigenvalue", fontsize=FONTSIZE_AXLABEL)
+    ax.tick_params(
+        axis="y",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    fig.tight_layout()
+    fig.savefig(analysis.directory / "sensitivity_ρ_singular_values.svg")
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -1586,12 +1621,8 @@ def makefig_sensitivity_tsvars_heatmap(
     )
     ax.set_yticks([i for i in reversed(range(len(analysis.parameters)))])
     # ^ reversed b/c origin="upper"
-    ax.set_xticklabels(
-        [arr_parameters[i] for i in dn["leaves"]]
-    )
-    ax.set_yticklabels(
-        [arr_parameters[i] for i in dn["leaves"]]
-    )
+    ax.set_xticklabels([arr_parameters[i] for i in dn["leaves"]])
+    ax.set_yticklabels([arr_parameters[i] for i in dn["leaves"]])
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
     ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
     #
