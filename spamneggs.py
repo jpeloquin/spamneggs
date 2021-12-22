@@ -789,9 +789,7 @@ def makefig_sensitivity_all(analysis):
     # Plots for time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, cases)
-        makefig_sensitivity_tsvar_all(
-            analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases
-        )
+        makefig_sensitivity_tsvar_all(analysis, tsvar_names, tsdata, cases, named_cases)
 
 
 def makefig_error_counts(analysis):
@@ -1102,15 +1100,7 @@ def makefig_sensitivity_ivar_all(
             fig.savefig(analysis.directory / f"distribution_-_{nm}.svg")
 
 
-def makefig_sensitivity_tsvar_all(
-    analysis, param_names, param_values, tsvar_names, tsdata, cases, named_cases=None
-):
-    """Plot sensitivity of each time series variable to each parameter"""
-    makefig_tsvars_line(analysis, cases, named_cases)
-    makefig_tsvars_pdf(analysis, tsdata, cases, named_cases)
-    # Obtain reference case
-    # TODO: The heat map figure should probably indicate which case is
-    # plotted as the time series guide.
+def get_reference_tsdata(analysis, tsdata, cases, named_cases):
     if "nominal" in named_cases.index:
         # Plot nominal case
         pth = analysis.directory / named_cases.loc["nominal", "path"]
@@ -1120,6 +1110,7 @@ def makefig_sensitivity_tsvar_all(
         ]
     else:
         # Plot median generated case
+        param_values = {k: cases[k] for k in analysis.parameters}
         median_levels = {
             k: values[len(values) // 2] for k, values in param_values.items()
         }
@@ -1129,6 +1120,42 @@ def makefig_sensitivity_tsvar_all(
         assert np.sum(m) == 1
         case_id = cases.index[m][0]
         ref_ts = tsdata[tsdata["Case"] == case_id]
+    return ref_ts
+
+
+def plot_reference_tsdata(tsdata, var, ax):
+    """Plot reference timeseries data into an axes"""
+    ax.plot(tsdata["Step"], tsdata[f"{var} [var]"], color="k")
+    # Set the axes limits to the min and max of the data, to match
+    # the axes limits used for the heatmap images.
+    ax.set_xlim(min(tsdata["Step"]), max(tsdata["Step"]))
+    ax.set_title(
+        var,
+        fontsize=FONTSIZE_FIGLABEL,
+        loc="left",
+        pad=3.0,
+    )
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+    ax.set_facecolor("#F6F6F6")
+
+
+def makefig_sensitivity_tsvar_all(
+    analysis, tsvar_names, tsdata, cases, named_cases=None
+):
+    """Plot sensitivity of each time series variable to each parameter"""
+    makefig_tsvars_line(analysis, cases, named_cases)
+    makefig_tsvars_pdf(analysis, tsdata, cases, named_cases)
+
+    # Obtain reference case for time series variables' correlation heatmap
+    # TODO: The heat map figure should probably indicate which case is
+    # plotted as the time series guide.
+    ref_ts = get_reference_tsdata(analysis, tsdata, cases, named_cases)
+
+    # Sobol analysis
+    S1, ST = sobol_analysis_tsvars(analysis, tsdata, cases)
+    makefig_sobol_tsvars(analysis, S1, ST, ref_ts)
+
     correlations_table = tab_tsvars_corrmap(analysis, tsdata)
     correlations_table.to_feather(analysis.directory / f"sensitivity_vectors.feather")
     makefig_sensitivity_tsvars_heatmap(
@@ -1150,14 +1177,14 @@ def makefig_sensitivity_tsvar_all(
         json.dump(stats, f)
     fig = Figure()
     # Plot the singular values for the sensitivity vectors
-    fig.set_size_inches((4, 3))  # TODO: set smart size
+    fig.set_size_inches((4, 3))
     FigureCanvas(fig)
     ax = fig.add_subplot()
     x = 1 + np.arange(len(s))
     ax.bar(x, s)
     for k in ax.spines:
         ax.spines[k].set_visible(False)
-    ax.set_xlabel("Eigenvector", fontsize=FONTSIZE_AXLABEL)
+    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
     ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
     ax.tick_params(
         axis="x",
@@ -1174,6 +1201,93 @@ def makefig_sensitivity_tsvar_all(
     )
     fig.tight_layout()
     fig.savefig(analysis.directory / "sensitivity_ρ_singular_values.svg")
+
+
+def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
+    fig, axarr = fig_blank_tsvars_by_parameter(
+        len(analysis.parameters),
+        len(analysis.variables),
+    )
+    tick_locator = mpl.ticker.MaxNLocator(integer=True)
+    ylim = np.zeros((len(analysis.parameters), len(analysis.variables)))
+    for j, var in enumerate(analysis.variables):
+        plot_reference_tsdata(ref_ts, "Fz", axarr[0, j])
+        axarr[0, j].xaxis.set_major_locator(tick_locator)
+        axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
+        for i, p in enumerate(analysis.parameters):
+            ax = axarr[i + 1, j]
+            x = np.arange(len(S1[p]))
+            ax.fill_between(x, ST[p], color="dimgray", label="Total")
+            ax.fill_between(x, S1[p], color="firebrick", label="1st order")
+            ax.xaxis.set_major_locator(tick_locator)
+            ax.set_xlim(0, max(x))
+            ylim[i, j] = ax.get_ylim()[1]
+    # Add labels to the left side
+    for i, p in enumerate(analysis.parameters):
+        axarr[i + 1, 0].set_ylabel(p, fontsize=FONTSIZE_AXLABEL)
+    # Add legend
+    for j, v in enumerate(analysis.variables):
+        axarr[1, j].legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.84, 0.0, 0),
+            ncol=2,
+            borderaxespad=0,
+            frameon=False,
+            fontsize=FONTSIZE_AXLABEL,
+        )
+        l, b = axarr[0, j].get_position().min
+        r, t = axarr[0, j].get_position().max
+        axarr[0, j].set_position(
+            (
+                l,
+                b + LABELH_MULT * FONTSIZE_FIGLABEL / 72 / fig.get_figheight(),
+                r - l,
+                t - b,
+            )
+        )
+    fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=free.svg")
+    max_ylim = np.max(ylim, axis=0)
+    for i in range(len(analysis.parameters)):
+        for j in range(len(analysis.variables)):
+            axarr[i + 1, j].set_ylim(0, max_ylim[j])
+    fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=shared.svg")
+
+
+def sobol_analysis_tsvars(analysis, tsdata, cases):
+    """Write Sobol analysis for time series variables"""
+    # With Y as tsvar at time t,
+    # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
+    # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
+    cases = cases.reset_index()
+    tsdata_by_case = tsdata.set_index("Case")
+    nsteps = len(np.unique(tsdata["Step"]))
+    # TODO: Make var a variable
+    var = "Fz"
+    arr = tsdata.pivot(index="Case", columns="Step", values=f"{var} [var]").values
+    E_Y = np.mean(arr, axis=0)
+    V_Y = np.var(arr, axis=0)
+
+    def E_Y_given_θ(var, p, value):
+        ids = cases[cases[p] == value]["ID"]
+        stratum = tsdata_by_case.loc[ids].pivot(columns="Step", values=f"{var} [var]")
+        return np.mean(stratum.values, axis=0)
+
+    m = V_Y != 0
+    S1 = {p: np.zeros(nsteps) for p in analysis.parameters}
+    for p in analysis.parameters:
+        # TODO: Levels information should probably be stored in the analysis object
+        levels = sorted(np.unique(cases[p]))
+        y = np.array([E_Y_given_θ(var, p, level) for level in levels])
+        S1[p][m] = np.var(y, axis=0)[m] / V_Y[m]
+    ST = {p: np.zeros(nsteps) for p in analysis.parameters}
+    for p in analysis.parameters:
+        # TODO: This is wrong, but not too wrong; instead, calculate VT by the method
+        #  described in https://uncertainpy.readthedocs.io/en/latest/theory/sa.html
+        #  and Saltelli_Tarantola_2010, if it applies.
+        ST[p][m] = (
+            1 - np.sum([S1[po] for po in analysis.parameters if po != p], axis=0)[m]
+        )
+    return S1, ST
 
 
 class NDArrayJSONEncoder(json.JSONEncoder):
@@ -1268,7 +1382,12 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
 
 
 def fig_blank_tsvars_by_parameter(
-    nparams, nvars, left_blankw=0.0, right_blankw=0.0, axw=5.0, axh=0.75
+    nparams,
+    nvars,
+    left_blankw=FONTSIZE_AXLABEL / 72,
+    right_blankw=4 / 72,
+    axw=5.0,
+    axh=0.75,
 ):
     """Return figure and axes for plotting tsvars by parameter
 
@@ -1322,9 +1441,24 @@ def fig_blank_tsvars_by_parameter(
             w = axw
             b = axes_b + j * (ax_vspace + ax_bticksh + axh)
             h = axh
-            axarr[j, i] = fig.add_axes(
-                (l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2"
+            ax = fig.add_axes(
+                (l / figw, b / figh, w / figw, h / figh),
             )
+            axarr[j, i] = ax
+            ax.tick_params(
+                axis="x",
+                color=COLOR_DEEMPH,
+                labelsize=FONTSIZE_TICKLABEL,
+                labelcolor=COLOR_DEEMPH,
+            )
+            ax.tick_params(
+                axis="y",
+                color=COLOR_DEEMPH,
+                labelsize=FONTSIZE_TICKLABEL,
+                labelcolor=COLOR_DEEMPH,
+            )
+            for spine in ("left", "right", "top", "bottom"):
+                ax.spines[spine].set_visible(False)
     axarr = axarr[::-1, :]  # Go top to bottom
 
     return fig, axarr
@@ -1465,22 +1599,8 @@ def makefig_sensitivity_tsvars_heatmap(
 
     # Draw the time series line plot in the first row
     for i, var in enumerate(analysis.variables):
-        ax = axarr[0, i]
-        ax.plot(ref_ts["Step"], ref_ts[f"{var} [var]"], color="k")
-        # Set the axes limits to the min and max of the data, to match
-        # the axes limits used for the heatmap images.
-        ax.set_xlim(min(ref_ts["Step"]), max(ref_ts["Step"]))
-        ax.set_title(
-            var,
-            fontsize=FONTSIZE_FIGLABEL,
-            loc="left",
-            pad=3.0,
-        )
-        for spine in ("left", "right", "top", "bottom"):
-            ax.spines[spine].set_visible(False)
-        ax.xaxis.set_major_locator(tick_locator)
-        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
-        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+        plot_reference_tsdata(ref_ts, var, axarr[0, i])
+        axarr[0, i].xaxis.set_major_locator(tick_locator)
 
     def plot_colorbar(im, ax):
         cbar = fig.colorbar(im, cax=ax)
@@ -1522,9 +1642,6 @@ def makefig_sensitivity_tsvars_heatmap(
             )
             # Labels
             ax.xaxis.set_major_locator(tick_locator)
-            ax.tick_params(
-                axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH
-            )
             ax.set_ylabel(
                 parameter,
                 fontsize=FONTSIZE_AXLABEL,
