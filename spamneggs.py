@@ -50,6 +50,7 @@ CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
 FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
+LABELH_MULT = 1.5  # multiple of font size to use for label height
 COLOR_DEEMPH = "dimgray"
 
 
@@ -719,12 +720,12 @@ def tab_tsvars_corrmap(analysis, tsdata, cov_zero_thresh=COV_ZERO_THRESH):
                     sensitivity_vectors[(pnm, vnm)][i] = 0
                 else:
                     sensitivity_vectors[(pnm, vnm)][i] = ρ
-    out = DataFrame(sensitivity_vectors).stack()
-    out.index.set_names(["Time Point", "Variable"], inplace=True)
-    out = out.melt(
+    correlations = DataFrame(sensitivity_vectors).stack()
+    correlations.index.set_names(["Time Point", "Variable"], inplace=True)
+    correlations = correlations.melt(
         ignore_index=False, var_name="Parameter", value_name="Correlation Coefficient"
     ).reset_index()
-    return out
+    return correlations
 
 
 def makefig_sensitivity_all(analysis):
@@ -1266,8 +1267,74 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
+def fig_blank_tsvars_by_parameter(
+    nparams, nvars, left_blankw=0.0, right_blankw=0.0, axw=5.0, axh=0.75
+):
+    """Return figure and axes for plotting tsvars by parameter
+
+    :param axw: width of each axes' plotting area in inches
+
+    :param axh: height of each axes' plotting area in inches
+
+    """
+    # Calculate widths of figure elements in inches.
+    fig_llabelw = LABELH_MULT * FONTSIZE_FIGLABEL / 72
+    # ^ width of parameters label on left of figure
+    ax_llabelw = LABELH_MULT * FONTSIZE_AXLABEL / 72
+    ax_hspace = LABELH_MULT * FONTSIZE_AXLABEL / 72
+    # ^ horizontal spacing between adjacent axes
+    ax_bticksh = FONTSIZE_AXLABEL / 72
+    # ^ vertical spacing between adjacent axes
+    central_areaw = ax_llabelw + (nvars * axw) + ax_hspace * (nvars - 1)
+    figw = left_blankw + fig_llabelw + central_areaw + right_blankw
+
+    # Calculate heights of figure elements
+    fig_tlabelh = LABELH_MULT * FONTSIZE_FIGLABEL / 72  # "Time series variables"
+    ax_tlabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # Variable names
+    # ^ height allocated for variable name
+    ax_blabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # "Time Point"
+    # ^ height allocated for time axis label
+    ax_bticksh = 1.3 * LABELH_MULT * FONTSIZE_TICKLABEL / 72
+    # ^ height allocated for x-axis tick labels, per axes
+    ax_vspace = 0
+    nparams = nparams + 1
+    # ^ number of axes high; the +1 is for a time series line plot
+    central_areah = ax_blabelh + (ax_bticksh + axh) * nparams + ax_tlabelh
+    figh = central_areah + fig_tlabelh
+
+    fig = Figure(figsize=(figw, figh))
+    FigureCanvas(fig)
+
+    # Coordinates of bounding box of central area with plots
+    central_l = fig_llabelw + left_blankw
+    # ^ left coord of central plotting area; this includes parameter names and any
+    # axes-specific colorbars
+    axes_l = central_l + ax_llabelw
+    axes_b = ax_blabelh + ax_bticksh
+    # ^ bottom coord of bottom axes in plots area; this only includes the axes
+    axes_t = axes_b + (nparams - 1) * (ax_bticksh + ax_vspace) + nparams * axh
+
+    # Create the axes
+    axarr = np.full((nparams, nvars), None)
+    for i in range(nvars):
+        for j in range(nparams):
+            l = axes_l + i * (ax_hspace + axw)
+            w = axw
+            b = axes_b + j * (ax_vspace + ax_bticksh + axh)
+            h = axh
+            axarr[j, i] = fig.add_axes(
+                (l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2"
+            )
+    axarr = axarr[::-1, :]  # Go top to bottom
+
+    return fig, axarr
+
+
 def makefig_sensitivity_tsvars_heatmap(
-    analysis, correlations, ref_ts, norm="none", cov_zero_thresh=COV_ZERO_THRESH
+    analysis,
+    correlations,
+    ref_ts,
+    norm="none",
 ):
     """Plot times series variable ∝ parameter heat maps.
 
@@ -1293,76 +1360,55 @@ def makefig_sensitivity_tsvars_heatmap(
         ["Parameter", "Variable", "Time Point"]
     )
 
-    # Plot the heatmap
-    lh = 1.5  # multiple of font size to use for label height
+    # Widths of plot panels
+    base_axw = 5.0
 
-    # Calculate widths of figure elements.  TODO: It would be better to
-    # specify the /figure/ width, then calculate the necessary axes
-    # widths.
+    # Widths of dendrogram axes
+    fig_llabelw = LABELH_MULT * FONTSIZE_FIGLABEL / 72
     dendro_axw = 12 / 72 * len(analysis.parameters)
-    fig_llabelw = lh * FONTSIZE_FIGLABEL / 72
-    dendro_areaw = fig_llabelw + dendro_axw
+
+    # Widths of colorbar elements
     cbar_axw = 12 / 72
     # ^ width of colorbar axes
+    cbar_lpad = 4 / 72
+    commoncbar_lpad = 10 / 72
+    # ^ padding b/w heat map axes and its colorbar axes
+    cbar_rlabelw = FONTSIZE_AXLABEL / 72
+    # ^ height of label text
     cbar_rpad = 36 / 72
     # ^ padding b/w colorbar axes and axes of /next/ heat map
-    cbar_lpad = 4 / 72
-    # ^ padding b/w heat map axes and its colorbar axes
-    cbar_areaw = cbar_lpad + cbar_axw + cbar_rpad
-    hmap_lpad = lh * FONTSIZE_AXLABEL / 72
-    hmap_axw = 4
-    # ^ width of individual heat map axes object if individual color
-    # scales used.  Otherwise heatmap expands to fill space.
-    hmap_subw = hmap_lpad + hmap_axw + cbar_lpad + cbar_axw + cbar_rpad
-    hmap_subwspace = FONTSIZE_AXLABEL / 72
-    hmap_subw = 4.5
-    hmap_areaw = hmap_subw * len(analysis.variables) + hmap_subwspace * (
-        len(analysis.variables) - 1
-    )
-    if norm in ("none", "all", "vector"):
-        # right_cbar = True
+
+    # Widths of right common colorbar area, if used
+    if norm in ("none", "all"):
+        # Use a common right-side colorbar
+        cbar_areaw = commoncbar_lpad + cbar_axw + cbar_rpad + cbar_rlabelw
+        # ^ total width of area needed for a colorbar
         rcbar_areaw = cbar_areaw
-        rcbar_wspace = hmap_subwspace
-        hmap_axw = hmap_subw - hmap_lpad
+        axw = base_axw
+    elif norm == "vector":
+        # Use a one right-side colorbar for each parameter
+        cbar_areaw = cbar_lpad + cbar_axw + cbar_rpad + cbar_rlabelw
+        rcbar_areaw = cbar_areaw
+        axw = base_axw
     else:  # norm == "individual"
-        # right_cbar = False
+        # No right-side colorbar; a colorbar will be placed alongside each axes
+        cbar_areaw = cbar_lpad + cbar_axw + cbar_rpad + cbar_rlabelw
         rcbar_areaw = 0
-        rcbar_wspace = 0
-        hmap_axw = hmap_subw - hmap_lpad - cbar_areaw
-    figw = dendro_areaw + hmap_areaw + rcbar_wspace + rcbar_areaw + rcbar_wspace
+        axw = base_axw + cbar_areaw
 
-    # Calculate heights of figure elements
-    fig_tlabelh = lh * FONTSIZE_FIGLABEL / 72  # "Time series variables"
-    hmap_tlabelh = lh * FONTSIZE_AXLABEL / 72  # Variable names
-    hmap_blabelh = lh * FONTSIZE_AXLABEL / 72  # "Step"
-    hmap_axh = 0.75
-    # ^ height allocated for each axes
-    hmap_vspace = (lh + 0.5) * FONTSIZE_TICKLABEL / 72
-    # ^ height allocated for x-axis tick labels, per axes
-    nh = len(analysis.parameters) + 1
-    # ^ number of axes high; the +1 is for a time series line plot
-    figh = hmap_blabelh + (hmap_vspace + hmap_axh) * nh + hmap_tlabelh + fig_tlabelh
-
-    fig = Figure(figsize=(figw, figh))
-    FigureCanvas(fig)
-
-    # Top and bottom edges of heat map axes
-    hmap_areal = fig_llabelw + dendro_axw
-    # ^ left coord of heatmap area
-    hmap_areab = hmap_blabelh + 0.5 * hmap_vspace
-    # ^ bottom coord of heatmap area, positioned such that vertical
-    # center of heatmap axes will line up with the dendrogram ticks
-    hmapaxes_b0 = hmap_areab + 0.5 * hmap_vspace
-    hmapaxes_t0 = (
-        hmapaxes_b0
-        + (len(analysis.parameters) - 1) * hmap_vspace
-        + len(analysis.parameters) * hmap_axh
+    fig, axarr, = fig_blank_tsvars_by_parameter(
+        len(analysis.parameters),
+        len(analysis.variables),
+        left_blankw=dendro_axw,
+        right_blankw=rcbar_areaw,
+        axw=axw,
     )
+    figw = fig.get_figwidth()
 
-    # Plot dendrogram
-    b = hmap_blabelh + 0.5 * hmap_vspace
-    h = (hmap_vspace + hmap_axh) * len(analysis.parameters)
-    dn_ax = fig.add_axes((fig_llabelw / figw, b / figh, dendro_axw / figw, h / figh))
+    # Plot dendrogram.  Do this first to get the parameter ordering.
+    t = axarr[1, 0].get_position().max[1]
+    b = axarr[-1, 0].get_position().min[1]
+    dn_ax = fig.add_axes((fig_llabelw / figw, b, dendro_axw / figw, t - b))
     by_parameter = correlations.unstack(["Variable", "Time Point"])
     arr = by_parameter.values
     # ^ first index over parameters, second over variables and time points
@@ -1387,7 +1433,6 @@ def makefig_sensitivity_tsvars_heatmap(
                 + (j - i - 1)
             )
             numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
-            # print(f"i = {i}; j = {j}; idx = {idx}; numerator = {numerator[idx]}")
     dist[numerator == 0] = 1
     # Compute the linkages
     links = scipy.cluster.hierarchy.linkage(
@@ -1409,22 +1454,24 @@ def makefig_sensitivity_tsvars_heatmap(
     for spine in ["left", "right", "top", "bottom"]:
         dn_ax.spines[spine].set_visible(False)
 
-    # Create common axis elements
+    # Create common axis elements for time series variable plots
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
+    if norm == "none":
+        absmax = 1
+        cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
+    elif norm == "all":
+        absmax = np.max(np.abs(correlations.values))
+        cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
 
     # Draw the time series line plot in the first row
-    for ivar, varname in enumerate(analysis.variables):
-        l = hmap_areal + ivar * (hmap_subw + hmap_subwspace) + hmap_lpad
-        w = hmap_axw
-        b = hmapaxes_b0 + len(analysis.parameters) * (hmap_vspace + hmap_axh)
-        h = hmap_axh
-        ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh), facecolor="#F2F2F2")
-        ax.plot(ref_ts["Step"], ref_ts[f"{varname} [var]"], color="k")
+    for i, var in enumerate(analysis.variables):
+        ax = axarr[0, i]
+        ax.plot(ref_ts["Step"], ref_ts[f"{var} [var]"], color="k")
         # Set the axes limits to the min and max of the data, to match
         # the axes limits used for the heatmap images.
         ax.set_xlim(min(ref_ts["Step"]), max(ref_ts["Step"]))
         ax.set_title(
-            varname.rpartition(" [var]")[0],
+            var,
             fontsize=FONTSIZE_FIGLABEL,
             loc="left",
             pad=3.0,
@@ -1432,46 +1479,33 @@ def makefig_sensitivity_tsvars_heatmap(
         for spine in ("left", "right", "top", "bottom"):
             ax.spines[spine].set_visible(False)
         ax.xaxis.set_major_locator(tick_locator)
-        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+        ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+        ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+
+    def plot_colorbar(im, ax):
+        cbar = fig.colorbar(im, cax=ax)
+        cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
+        cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
+        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+        cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
+        cbar.ax.yaxis.set_label_coords(2.7, 0.5)
+        return cbar
 
     # Plot heatmaps
-    if norm == "none":
-        absmax = 1
-        cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
-    elif norm == "all":
-        absmax = np.max(np.abs(correlations.values))
-        cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
-    for irow, iparam in enumerate(reversed(dn["leaves"])):
+    for j in range(axarr.shape[1]):
+        axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
+    for irow, iparam in enumerate(dn["leaves"]):
         parameter = arr_parameters[iparam]
         if norm == "vector":
             absmax = np.max(np.abs(correlations.loc[parameter].values))
             cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
-        for ivar, varname in enumerate(analysis.variables):
+        for ivar, var in enumerate(analysis.variables):
             if norm == "subvector":
-                absmax = np.max(np.abs(correlations.loc[parameter, varname].values))
+                absmax = np.max(np.abs(correlations.loc[parameter, var].values))
                 cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
-
-            # Calculate bounding box for heatmap and colorbar axes.
-            # Include the left & right labels within the bounding box,
-            # but exclude the top and bottom labels.
-            bbox = (
-                hmap_areal + ivar * (hmap_subw + hmap_subwspace),
-                hmap_areab + 0.5 * hmap_vspace + irow * (hmap_vspace + hmap_axh),
-                hmap_subw,
-                hmap_axh,
-            )
-
-            # Draw the heatmap
-            #
-            # Axes
-            l = hmap_areal + ivar * (hmap_subw + hmap_subwspace) + hmap_lpad
-            w = hmap_axw
-            b = hmapaxes_b0 + irow * (hmap_vspace + hmap_axh)
-            h = hmap_axh
-            ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
+            ax = axarr[irow + 1, ivar]
             # Image
-            ρ = correlations.loc[parameter, varname].values.T
+            ρ = correlations.loc[parameter, var].values.T
             im = ax.imshow(
                 ρ,
                 aspect="auto",
@@ -1488,46 +1522,48 @@ def makefig_sensitivity_tsvars_heatmap(
             )
             # Labels
             ax.xaxis.set_major_locator(tick_locator)
-            ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+            ax.tick_params(
+                axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH
+            )
             ax.set_ylabel(
                 parameter,
                 fontsize=FONTSIZE_AXLABEL,
             )
             ax.tick_params(axis="y", left=False, labelleft=False)
-            if irow == 0:
-                ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_TICKLABEL)
 
             # Draw the heatmap's colorbar
             if norm == "subvector":
-                l = l + hmap_axw + cbar_lpad
+                # Narrow axes to fit cbar
+                l, b = ax.get_position().min
+                r, t = ax.get_position().max
+                ax.set_position((l, b, base_axw / figw, t - b))
+                # Create new cbar axes
+                r, t = ax.get_position().max
                 cbar_ax = fig.add_axes(
-                    (l / figw, b / figh, cbar_axw / figw, hmap_axh / figh)
+                    (r + cbar_lpad / figw, b, cbar_axw / figw, t - b)
                 )
-                cbar = fig.colorbar(im, cax=cbar_ax)
-                cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
-                cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
-                cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-                cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
-                cbar.ax.yaxis.set_label_coords(2.7, 0.5)
+                plot_colorbar(im, cbar_ax)
             elif norm == "vector" and ivar == len(analysis.variables) - 1:
-                l = dendro_areaw + hmap_areaw + rcbar_wspace
-                b = hmapaxes_b0 + irow * (hmap_vspace + hmap_axh)
-                w = cbar_axw
-                h = hmap_axh
-                ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
-                cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
-                cbar.ax.yaxis.set_major_locator(mpl.ticker.LinearLocator(3))
-                cbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter("%.2g"))
-                cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-                cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
+                l = ax.get_position().max[0] + commoncbar_lpad / figw
+                b = ax.get_position().min[1]
+                t = ax.get_position().max[1]
+                w = cbar_axw / figw
+                cbar_ax = fig.add_axes((l, b, w, t - b))
+                plot_colorbar(im, cbar_ax)
+    # Adjust the width of the reference line plot
+    if norm == "subvector":
+        for j in range(axarr.shape[1]):
+            l, b = axarr[0, j].get_position().min
+            r, t = axarr[0, j].get_position().max
+            axarr[0, j].set_position((l, b, base_axw / figw, t - b))
 
     # Add the whole-plot right-most colorbar, if called for
     if norm in ("none", "all"):
-        l = dendro_areaw + hmap_areaw + rcbar_wspace
-        b = hmapaxes_b0
-        w = cbar_axw
-        h = hmapaxes_t0 - hmapaxes_b0
-        ax = fig.add_axes((l / figw, b / figh, w / figw, h / figh))
+        l = axarr[1, -1].get_position().max[0] + commoncbar_lpad / figw
+        b = axarr[-1, -1].get_position().min[1]
+        t = axarr[1, -1].get_position().max[1]
+        w = cbar_axw / figw
+        ax = fig.add_axes((l, b, w, t - b))
         cbar = fig.colorbar(im, cax=ax)  # `im` from last imshow
         clocator = mpl.ticker.LinearLocator()
         cbar.ax.yaxis.set_major_locator(clocator)
