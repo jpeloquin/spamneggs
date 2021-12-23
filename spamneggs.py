@@ -1211,14 +1211,14 @@ def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
     ylim = np.zeros((len(analysis.parameters), len(analysis.variables)))
     for j, var in enumerate(analysis.variables):
-        plot_reference_tsdata(ref_ts, "Fz", axarr[0, j])
+        plot_reference_tsdata(ref_ts, var, axarr[0, j])
         axarr[0, j].xaxis.set_major_locator(tick_locator)
         axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
         for i, p in enumerate(analysis.parameters):
             ax = axarr[i + 1, j]
-            x = np.arange(len(S1[p]))
-            ax.fill_between(x, ST[p], color="dimgray", label="Total")
-            ax.fill_between(x, S1[p], color="firebrick", label="1st order")
+            x = np.arange(len(S1[p][var]))
+            ax.fill_between(x, ST[p][var], color="dimgray", label="Total")
+            ax.fill_between(x, S1[p][var], color="darkred", label="1st order")
             ax.xaxis.set_major_locator(tick_locator)
             ax.set_xlim(0, max(x))
             ylim[i, j] = ax.get_ylim()[1]
@@ -1253,40 +1253,79 @@ def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
     fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=shared.svg")
 
 
+# noinspection PyPep8Naming
 def sobol_analysis_tsvars(analysis, tsdata, cases):
     """Write Sobol analysis for time series variables"""
-    # With Y as tsvar at time t,
-    # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
-    # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
     cases = cases.reset_index()
     tsdata_by_case = tsdata.set_index("Case")
     nsteps = len(np.unique(tsdata["Step"]))
-    # TODO: Make var a variable
-    var = "Fz"
-    arr = tsdata.pivot(index="Case", columns="Step", values=f"{var} [var]").values
-    E_Y = np.mean(arr, axis=0)
-    V_Y = np.var(arr, axis=0)
+    Var_Y = {}
+    for v in analysis.variables:
+        arr = tsdata.pivot(index="Case", columns="Step", values=f"{v} [var]").values
+        Var_Y[v] = np.var(arr, axis=0)
+    # TODO: Levels information should probably be stored in the analysis object
+    levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
 
-    def E_Y_given_θ(var, p, value):
+    def E_Y_over_θ(var, p, value):
         ids = cases[cases[p] == value]["ID"]
         stratum = tsdata_by_case.loc[ids].pivot(columns="Step", values=f"{var} [var]")
         return np.mean(stratum.values, axis=0)
 
-    m = V_Y != 0
-    S1 = {p: np.zeros(nsteps) for p in analysis.parameters}
-    for p in analysis.parameters:
-        # TODO: Levels information should probably be stored in the analysis object
-        levels = sorted(np.unique(cases[p]))
-        y = np.array([E_Y_given_θ(var, p, level) for level in levels])
-        S1[p][m] = np.var(y, axis=0)[m] / V_Y[m]
-    ST = {p: np.zeros(nsteps) for p in analysis.parameters}
-    for p in analysis.parameters:
-        # TODO: This is wrong, but not too wrong; instead, calculate VT by the method
-        #  described in https://uncertainpy.readthedocs.io/en/latest/theory/sa.html
-        #  and Saltelli_Tarantola_2010, if it applies.
-        ST[p][m] = (
-            1 - np.sum([S1[po] for po in analysis.parameters if po != p], axis=0)[m]
-        )
+    # With Y as tsvar at time t,
+    # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
+    # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
+    S1 = {
+        p: {v: np.zeros(nsteps)}
+        for p in analysis.parameters
+        for v in analysis.variables
+    }
+    for v in analysis.variables:
+        m = Var_Y[v] != 0
+        for p in analysis.parameters:
+            y = np.array([E_Y_over_θ(v, p, level) for level in levels[p]])
+            S1[p][v][m] = np.var(y, axis=0)[m] / Var_Y[v][m]
+    # With Y as tsvar at time t,
+    # V_T = Var(Y) - Var_X_≠i[ E_X_i(Y | θ_≠i) ]
+    ST = {
+        p: {v: np.zeros(nsteps)}
+        for p in analysis.parameters
+        for v in analysis.variables
+    }
+    for v in analysis.variables:
+        m = Var_Y[v] != 0
+        for p in analysis.parameters:
+            # Approach 1.  This produced ST < 0, perhaps due to correlations between
+            # parameters, or perhaps due to an error in this code.  See below for the
+            # approach actually used.
+            # grouped = tsdata.groupby(
+            #     ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
+            # )
+            # E_Y_over_θ_i = grouped[f"{v} [var]"].mean()
+            # E_Y_over_θ_i.reset_index(
+            #     level=[
+            #         i for i, nm in enumerate(E_Y_over_θ_i.index.names) if nm != "Step"
+            #     ],
+            #     drop=True,
+            #     inplace=True,
+            # )
+            # Var_over_θ_noti = E_Y_over_θ_i.groupby("Step").var().values
+            # ST[p][v][m] = 1 - Var_over_θ_noti[m] / Var_Y[v][m]
+            # Approach 2
+            # TODO: Having the level indices in the data frame itself would be
+            #  helpful to guard against floating point imprecision.
+            grouped = tsdata.groupby(
+                ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
+            )
+            Var_Y_over_θ_i = grouped[f"{v} [var]"].var()
+            Var_Y_over_θ_i.reset_index(
+                level=[
+                    i for i, nm in enumerate(Var_Y_over_θ_i.index.names) if nm != "Step"
+                ],
+                drop=True,
+                inplace=True,
+            )
+            E_over_θ_noti = Var_Y_over_θ_i.groupby("Step").mean().values
+            ST[p][v][m] = E_over_θ_noti[m] / Var_Y[v][m]
     return S1, ST
 
 
