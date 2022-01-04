@@ -915,7 +915,7 @@ def makefig_error_pdf_uniparam(analysis):
         for j, e in enumerate(error_codes):
             ax = fig.add_subplot(gs[j, i])
             p = p_error(cases, e, param, levels[param])
-            ax.plot(levels[param], p, "-", color="gray")
+            ax.fill_between(levels[param], p, color="darkred")
             ax.plot(
                 levels[param],
                 p,
