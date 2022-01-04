@@ -1269,76 +1269,59 @@ def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
 # noinspection PyPep8Naming
 def sobol_analysis_tsvars(analysis, tsdata, cases):
     """Write Sobol analysis for time series variables"""
-    cases = cases.reset_index()
-    tsdata_by_case = tsdata.set_index("Case")
     nsteps = len(np.unique(tsdata["Step"]))
-    Var_Y = {}
-    for v in analysis.variables:
-        arr = tsdata.pivot(index="Case", columns="Step", values=f"{v} [var]").values
-        Var_Y[v] = np.var(arr, axis=0)
     # TODO: Levels information should probably be stored in the analysis object
-    levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
-
-    def E_Y_over_θ(var, p, value):
-        ids = cases[cases[p] == value]["ID"]
-        stratum = tsdata_by_case.loc[ids].pivot(columns="Step", values=f"{var} [var]")
-        return np.mean(stratum.values, axis=0)
-
-    # With Y as tsvar at time t,
-    # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
-    # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
     S1 = {
         p: {v: np.zeros(nsteps)}
         for p in analysis.parameters
         for v in analysis.variables
     }
+    ST = deepcopy(S1)
     for v in analysis.variables:
-        m = Var_Y[v] != 0
+        # Exclude time points with zero variance
+        var_by_step = tsdata.groupby("Step")[f"{v} [var]"].var()
+        skip_steps = var_by_step[var_by_step == 0].index.values
+        data1 = tsdata[~tsdata["Step"].isin(skip_steps)]
+        m = np.ones(nsteps, dtype=bool)
+        m[skip_steps] = False
         for p in analysis.parameters:
-            y = np.array([E_Y_over_θ(v, p, level) for level in levels[p]])
-            S1[p][v][m] = np.var(y, axis=0)[m] / Var_Y[v][m]
-    # With Y as tsvar at time t,
-    # V_T = Var(Y) - Var_X_≠i[ E_X_i(Y | θ_≠i) ]
-    ST = {
-        p: {v: np.zeros(nsteps)}
-        for p in analysis.parameters
-        for v in analysis.variables
-    }
-    for v in analysis.variables:
-        m = Var_Y[v] != 0
-        for p in analysis.parameters:
-            # Approach 1.  This produced ST < 0, perhaps due to correlations between
-            # parameters, or perhaps due to an error in this code.  See below for the
-            # approach actually used.
-            # grouped = tsdata.groupby(
-            #     ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
-            # )
-            # E_Y_over_θ_i = grouped[f"{v} [var]"].mean()
-            # E_Y_over_θ_i.reset_index(
-            #     level=[
-            #         i for i, nm in enumerate(E_Y_over_θ_i.index.names) if nm != "Step"
-            #     ],
-            #     drop=True,
-            #     inplace=True,
-            # )
-            # Var_over_θ_noti = E_Y_over_θ_i.groupby("Step").var().values
-            # ST[p][v][m] = 1 - Var_over_θ_noti[m] / Var_Y[v][m]
-            # Approach 2
+            data2 = data1
+            # Exclude cases that are not part of a stratum with at least 2 cases
+            idxs = ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
             # TODO: Having the level indices in the data frame itself would be
             #  helpful to guard against floating point imprecision.
-            grouped = tsdata.groupby(
-                ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
-            )
-            Var_Y_over_θ_i = grouped[f"{v} [var]"].var()
-            Var_Y_over_θ_i.reset_index(
-                level=[
-                    i for i, nm in enumerate(Var_Y_over_θ_i.index.names) if nm != "Step"
-                ],
-                drop=True,
-                inplace=True,
-            )
-            E_over_θ_noti = Var_Y_over_θ_i.groupby("Step").mean().values
-            ST[p][v][m] = E_over_θ_noti[m] / Var_Y[v][m]
+            var_by_stratum = data2.groupby(idxs)[f"{v} [var]"].agg(["var", "count"])
+            data2 = pd.merge(data2.set_index(idxs), var_by_stratum[["count"]],
+                            left_index=True, right_index=True)
+            data2 = data2[data2["count"] >= 2]
+            # Direct effect
+            # With Y as tsvar at time t,
+            # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
+            # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
+            μ_by_level = data2.groupby(["Step", f"{p} [param]"])[f"{v} [var]"].mean()
+            S1[p][v][m] = μ_by_level.reset_index().groupby("Step")[f"{v} [var]"].var() / var_by_step[m]
+            # Total effect
+            # With Y as tsvar at time t, V_Ti = Var(Y) - Var_X_≠i[ E_X_i(Y | θ_≠i) ]
+            ST[p][v][m] = var_by_stratum[var_by_stratum["count"] >= 2].groupby("Step")["var"].mean() / var_by_step[m]
+            # Cleanup to prevent accidental reuse
+            del data2
+        del data1
+    # Another approach to calculating ST is presented here.  This produced ST < 0,
+    # perhaps due to correlations between parameters, or perhaps due to an error in
+    # this code.
+    # grouped = tsdata.groupby(
+    #     ["Step"] + [f"{nm} [param]" for nm in analysis.parameters if nm != p]
+    # )
+    # E_Y_over_θ_i = grouped[f"{v} [var]"].mean()
+    # E_Y_over_θ_i.reset_index(
+    #     level=[
+    #         i for i, nm in enumerate(E_Y_over_θ_i.index.names) if nm != "Step"
+    #     ],
+    #     drop=True,
+    #     inplace=True,
+    # )
+    # Var_over_θ_noti = E_Y_over_θ_i.groupby("Step").var().values
+    # ST[p][v][m] = 1 - Var_over_θ_noti[m] / Var_Y[v][m]
     return S1, ST
 
 
