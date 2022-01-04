@@ -895,11 +895,17 @@ def makefig_error_pdf_uniparam(analysis):
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
 
-    def p_error(cases, error_code, parameter, levels):
+    def p_error(cases, parameter, levels, error_code=None):
         p = np.full(len(levels), np.nan)
         for i, level in enumerate(levels):
-            m = cases[parameter] == level
-            p[i] = np.sum(cases[error_code][m]) / np.sum(m)
+            # noinspection PyTypeChecker
+            m: pd.Series = cases[parameter] == level
+            if error_code is None:
+                # P(any error code)
+                p[i] = sum(cases[m]["Run Status"] == "Error") / sum(m)
+            else:
+                # P(specific error code)
+                p[i] = sum(cases[m][error_code]) / sum(m)
         return p
 
     # Create figure with probability density function plots
@@ -908,14 +914,21 @@ def makefig_error_pdf_uniparam(analysis):
         wspace=6 / 72, hspace=6 / 72, w_pad=4 / 72, h_pad=4 / 72
     )
     nw = len(analysis.parameters)
-    nh = len(error_codes)
+    nh = len(error_codes) + 1  # Extra row for union of all error codes
     fig.set_size_inches((3.5 * nw + 0.25, 3.2 * nh + 0.25))  # TODO: set common style
     gs = GridSpec(nh, nw, figure=fig)
     for i, param in enumerate(analysis.parameters):
-        for j, e in enumerate(error_codes):
+        for j in range(nh):
+            if j == 0:
+                e = "Any Error"
+                p = p_error(cases, param, levels[param])
+                color = "#2e2e2e"
+            else:  # plot p(specific error code)
+                e = error_codes[j - 1]
+                p = p_error(cases, param, levels[param], e)
+                color = "#a22222"
             ax = fig.add_subplot(gs[j, i])
-            p = p_error(cases, e, param, levels[param])
-            ax.fill_between(levels[param], p, color="darkred")
+            ax.fill_between(levels[param], p, color=color)
             ax.plot(
                 levels[param],
                 p,
