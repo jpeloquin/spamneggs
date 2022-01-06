@@ -1271,6 +1271,7 @@ def sobol_analysis_tsvars(analysis, tsdata, cases):
     """Write Sobol analysis for time series variables"""
     nsteps = len(np.unique(tsdata["Step"]))
     # TODO: Levels information should probably be stored in the analysis object
+    levels = {p: sorted(np.unique(cases[p])) for p in analysis.parameters}
     S1 = {
         p: {v: np.zeros(nsteps)}
         for p in analysis.parameters
@@ -1279,8 +1280,8 @@ def sobol_analysis_tsvars(analysis, tsdata, cases):
     ST = deepcopy(S1)
     for v in analysis.variables:
         # Exclude time points with zero variance
-        var_by_step = tsdata.groupby("Step")[f"{v} [var]"].var()
-        skip_steps = var_by_step[var_by_step == 0].index.values
+        d = tsdata.groupby("Step")[f"{v} [var]"].var()
+        skip_steps = d[d == 0].index.values
         data1 = tsdata[~tsdata["Step"].isin(skip_steps)]
         m = np.ones(nsteps, dtype=bool)
         m[skip_steps] = False
@@ -1291,18 +1292,28 @@ def sobol_analysis_tsvars(analysis, tsdata, cases):
             # TODO: Having the level indices in the data frame itself would be
             #  helpful to guard against floating point imprecision.
             var_by_stratum = data2.groupby(idxs)[f"{v} [var]"].agg(["var", "count"])
-            data2 = pd.merge(data2.set_index(idxs), var_by_stratum[["count"]],
-                            left_index=True, right_index=True)
-            data2 = data2[data2["count"] >= 2]
+            data2 = pd.merge(
+                data2.set_index(idxs),
+                var_by_stratum[["count"]],
+                left_index=True,
+                right_index=True,
+            )
+            data2 = data2[data2["count"] == len(levels[p])]
+            # Everything after this should use the data with all exclusion rules applied
+            var_by_step = data2.groupby("Step")[f"{v} [var]"].var()
+            var_by_stratum = var_by_stratum[var_by_stratum["count"] == len(levels[p])]
             # Direct effect
             # With Y as tsvar at time t,
             # V_i = Var[ E(Y | θ_i) ] = E[E(Y|θ_i)^2] - E[E(Y|θ_i)]^2
             # E[E(Y|θ_i)]^2 = E(Y)^2 by law of total expectation
             μ_by_level = data2.groupby(["Step", f"{p} [param]"])[f"{v} [var]"].mean()
-            S1[p][v][m] = μ_by_level.reset_index().groupby("Step")[f"{v} [var]"].var() / var_by_step[m]
+            S1[p][v][m] = (
+                μ_by_level.reset_index().groupby("Step")[f"{v} [var]"].var()
+                / var_by_step
+            )
             # Total effect
             # With Y as tsvar at time t, V_Ti = Var(Y) - Var_X_≠i[ E_X_i(Y | θ_≠i) ]
-            ST[p][v][m] = var_by_stratum[var_by_stratum["count"] >= 2].groupby("Step")["var"].mean() / var_by_step[m]
+            ST[p][v][m] = var_by_stratum.groupby("Step")["var"].mean() / var_by_step
             # Cleanup to prevent accidental reuse
             del data2
         del data1
