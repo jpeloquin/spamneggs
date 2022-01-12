@@ -1655,6 +1655,8 @@ def makefig_sensitivity_tsvars_heatmap(
         cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
         cbar.set_label("ρ [1]", fontsize=FONTSIZE_TICKLABEL)
         cbar.ax.yaxis.set_label_coords(2.7, 0.5)
+        for k in cbar.ax.spines:
+            cbar.ax.spines[k].set_visible(False)
         return cbar
 
     # Plot heatmaps
@@ -1812,7 +1814,7 @@ def makefig_sensitivity_tsvars_heatmap(
     )
     cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
     cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label("Distance correlation", fontsize=FONTSIZE_AXLABEL)
+    cbar.set_label("Correlation Distance = 1 − |ρ|", fontsize=FONTSIZE_AXLABEL)
     cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
     ax.set_title("Sensitivity vector distance matrix", fontsize=FONTSIZE_FIGLABEL)
     ax.set_xticks(
