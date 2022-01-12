@@ -1182,37 +1182,9 @@ def makefig_sensitivity_tsvar_all(
         analysis, correlations_table, ref_ts, norm="subvector"
     )
     # Estimate the rank of the sensitivity vectors
-    correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
-    arr = correlations.unstack(["Variable", "Time Point"]).values
-    u, s, vh = np.linalg.svd(arr.T)
-    stats = {"singular values": s.tolist()}
+    fig, svd_values = fig_corr_svd(correlations_table)
     with open(analysis.directory / "sensitivity_ρ_stats.json", "w") as f:
-        json.dump(stats, f)
-    fig = Figure()
-    # Plot the singular values for the sensitivity vectors
-    fig.set_size_inches((4, 3))
-    FigureCanvas(fig)
-    ax = fig.add_subplot()
-    x = 1 + np.arange(len(s))
-    ax.bar(x, s)
-    for k in ax.spines:
-        ax.spines[k].set_visible(False)
-    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
-    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
-    ax.tick_params(
-        axis="x",
-        color=COLOR_DEEMPH,
-        labelsize=FONTSIZE_TICKLABEL,
-        labelcolor=COLOR_DEEMPH,
-    )
-    ax.set_ylabel("Eigenvalue", fontsize=FONTSIZE_AXLABEL)
-    ax.tick_params(
-        axis="y",
-        color=COLOR_DEEMPH,
-        labelsize=FONTSIZE_TICKLABEL,
-        labelcolor=COLOR_DEEMPH,
-    )
-    fig.tight_layout()
+        json.dump(svd_values, f)
     fig.savefig(analysis.directory / "sensitivity_ρ_singular_values.svg")
 
 
@@ -2051,6 +2023,39 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
             color=colors.categorical_n7[i % len(colors.categorical_n7)],
         )
     ax.legend()
+
+
+def fig_corr_svd(correlations_table):
+    correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
+    arr = correlations.unstack(["Variable", "Time Point"]).values
+    u, s, vh = np.linalg.svd(arr.T)
+    svd_values = {"singular values": s.tolist()}
+    fig = Figure()
+    # Plot the singular values for the sensitivity vectors
+    fig.set_size_inches((4, 3))
+    FigureCanvas(fig)
+    ax = fig.add_subplot()
+    x = 1 + np.arange(len(s))
+    ax.bar(x, s)
+    for k in ax.spines:
+        ax.spines[k].set_visible(False)
+    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax.tick_params(
+        axis="x",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    ax.set_ylabel("Eigenvalue", fontsize=FONTSIZE_AXLABEL)
+    ax.tick_params(
+        axis="y",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    fig.tight_layout()
+    return fig, svd_values
 
 
 def fig_tsvar_pdf(
