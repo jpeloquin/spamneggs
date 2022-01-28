@@ -28,7 +28,7 @@ spamneggs is licensed under the [AGPLv3](LICENSE).  You should read the entire l
 ## Getting started
 
 Spamneggs depends on:
-- A working Python ≥ 3.8 environment with the public packages numpy, pandas, sklean, matplotlib, lxml, and pathos; and my packages waffleiron and (optionally; only used for some error checks) prunetest.
+- A working Python ≥ 3.8 environment with the public packages numpy, pandas, sklean, matplotlib, lxml, and pathos; and my packages [waffleiron](https://github.com/jpeloquin/waffleiron) and (optionally; only used for some error checks) [prunetest](https://github.com/jpeloquin/prunetest).
 - A working FEBio installation.  By default, waffleiron uses the command `febio` to start an FEBio process, but if the environment variable `FEBIO_CMD` is defined its value will be used to start an FEBio process.
 
 TODO: Minimal example.
