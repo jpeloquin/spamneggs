@@ -11,9 +11,7 @@ from lxml import etree
 
 # In-house packages
 from waffleiron.input import read_febio_xml, textdata_table
-from waffleiron.output import write_xml as write_febio_xml
 from waffleiron.select import find_closest_timestep
-from waffleiron.xplt import XpltData
 
 # Same-package modules
 from .core import Parameter
