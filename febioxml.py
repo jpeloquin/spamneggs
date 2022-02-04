@@ -10,10 +10,10 @@ import pandas as pd
 from lxml import etree
 
 # In-house packages
-from febtools.input import read_febio_xml, textdata_table
-from febtools.output import write_xml as write_febio_xml
-from febtools.select import find_closest_timestep
-from febtools.xplt import XpltData
+from waffleiron.input import read_febio_xml, textdata_table
+from waffleiron.output import write_xml as write_febio_xml
+from waffleiron.select import find_closest_timestep
+from waffleiron.xplt import XpltData
 
 # Same-package modules
 from .core import Parameter
@@ -206,12 +206,12 @@ def parse_var_selector(text):
     var_info["entity"] = entity_type
     if entity_type in ("domain", "surface"):
         # Plotfile regions have 1-indexed IDs because they don't really
-        # exist outside the plotfile, so febtools doesn't give them
+        # exist outside the plotfile, so waffleiron doesn't give them
         # proper IDs
         var_info["entity ID"] = entity_id[0]
     else:
         # Nodes, canonical face tuples, and elements have 0-indexed IDs
-        # as far as febtools and spamneggs are concerned
+        # as far as waffleiron and spamneggs are concerned
         if hasattr(entity_id[0], "__iter__"):
             var_info["entity ID"] = tuple(a - 1 for a in entity_id[0])
         else:

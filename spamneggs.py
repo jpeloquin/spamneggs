@@ -13,13 +13,13 @@ from lxml import etree
 from pandas import CategoricalDtype, DataFrame
 from sklearn.neighbors import KernelDensity
 
-import febtools as feb
+import waffleiron as wfl
 
 # Third-party packages
 import pandas as pd
 import psutil
 import scipy.cluster
-from febtools.febio import (
+from waffleiron.febio import (
     FEBioError,
     CheckError,
     run_febio_checked,
@@ -100,10 +100,10 @@ class Analysis:
         parentdir := The directory in which the analysis folder will be
         stored. Defaults to the current working directory.
 
-        :param checks: Sequence of callables that take a febtools Model as their lone
-        argument and should raise an exception if the check fails, or return None if
-        the check succeeds.  This is meant for user-defined verification of
-        simulation output.
+        :param checks: Sequence of callables that take a waffleiron Model as their lone
+        argument and should raise an exception if the check fails, or return None if the
+        check succeeds.  This is meant for user-defined verification of simulation
+        output.
 
         """
         self.model = model
@@ -173,7 +173,7 @@ class Case:
     @property
     def solution(self):
         if self._solution is None:
-            self._solution = feb.load_model(self.sim_file)
+            self._solution = wfl.load_model(self.sim_file)
         return self._solution
 
     @classmethod
@@ -370,11 +370,11 @@ def run_case(case):
     """
     # Verify that simulation file can be loaded.  If not, we won't be able to extract
     # data from it later anyway.
-    model = feb.load_model(case.sim_file)
+    model = wfl.load_model(case.sim_file)
     # Verify that simulation file uses must points.  If it does not, the return values
     # from the various cases will not be at the same times, and the sensitivity analysis
     # will be invalid.
-    if not all(feb.febio.uses_must_points(model)):
+    if not all(wfl.febio.uses_must_points(model)):
         raise UnconstrainedTimesError(
             f"{case.sim_file} does not use so-called 'must points' in all steps.  To support sensitivity analysis, values must be calculated and stored at the same times in all cases.  FEBio is highly unlikely to do this unless it is forced to through the use of must points."
         )
@@ -410,9 +410,9 @@ def run_sensitivity(analysis, nlevels, on_case_error="stop"):
     """Run a sensitivity analysis from an analysis object."""
     _validate_opt_on_case_error(on_case_error)
     _ensure_analysis_directory(analysis)
-    # Set febtools to run FEBio with only 1 thread, since we'll be
+    # Set waffleiron to run FEBio with only 1 thread, since we'll be
     # running one FEBio process per core
-    feb.febio.FEBIO_THREADS = 1
+    wfl.febio.FEBIO_THREADS = 1
 
     def replace_status(tab, status, step=None):
         if step is not None:
