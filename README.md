@@ -49,7 +49,7 @@ Many computer programs exist to perform parametric sensitivity analysis.  Two as
 1. FEBio integration
 2. Treats detection and reporting of errors with as having importance equal to the simulation's output variables
 
-A non-comprehensive list of other packages for sensitivity analysis or uncertainty analysis (which can be used in the same way) is:
+A non-comprehensive list of other packages for sensitivity analysis or uncertainty analysis (which can often be used for sensitivity analysis) is:
 - [SALib](https://github.com/SALib/SALib)
 - [Uncertainpy](https://github.com/simetenn/uncertainpy)
 - [UncertainSCI](https://github.com/SCIInstitute/UncertainSCI)
