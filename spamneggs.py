@@ -204,7 +204,7 @@ class Case:
         # ^ exist_ok is needed to make calling this function threadsafe
         tree = self.analysis.model(self)
         with open(self.sim_file, "wb") as f:
-            fx.write_febio_xml(tree, f)
+            wfl.output.write_xml(tree, f)
 
 
 class FEBioXMLModel:
