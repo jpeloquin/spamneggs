@@ -1,8 +1,8 @@
 spamneggs is a Python package to run unsupervised parametric sensitivity analyses using [FEBio](https://github.com/febiosoftware/FEBio) models.
 
 The user provides:
-- A template FEBio model and a Python function to update its parameters, or a Python function to generate FEBio XML given a collection of parameter values
-- Names and ranges of each parameter
+- A template FEBio model and a Python function to update its parameters, or a Python function to construct an FEBio model from a collection of parameter values.
+- Names and ranges of each parameter.
 - Output variables.  Predefined functions are avaialble for extracting output variables from FEBio text and binary (.xplt) data.
 - (Optinal) Python functions to check solved models for errors.  Some checks are done by default.
 
