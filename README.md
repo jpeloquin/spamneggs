@@ -17,7 +17,7 @@ So far, spamneggs has been tested with analyses of up to 60,000 cases.
 
 # Project status
 
-Spamneggs was released on 2022-01-20 to https://github.com/jpeloquin/spamneggs.  I am working on user documentation.  If you are interested in being a guinea pig, please [raise an issue](https://github.com/jpeloquin/spamneggs/issues) to describe what you're trying to do.
+Spamneggs was released on 2022-01-20 to https://github.com/jpeloquin/spamneggs.  I am working on user documentation.  If you are interested in testing it out, please [raise an issue](https://github.com/jpeloquin/spamneggs/issues) to describe what you're trying to do.
 
 # Using spamneggs
 
