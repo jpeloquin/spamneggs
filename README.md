@@ -31,7 +31,60 @@ Spamneggs depends on:
 - A working Python ≥ 3.8 environment with the public packages numpy, pandas, sklean, matplotlib, lxml, and pathos; and my packages [waffleiron](https://github.com/jpeloquin/waffleiron) and (optionally; only used for some error checks) [prunetest](https://github.com/jpeloquin/prunetest).
 - A working FEBio installation.  By default, waffleiron uses the command `febio` to start an FEBio process, but if the environment variable `FEBIO_CMD` is defined its value will be used to start an FEBio process.
 
-TODO: Minimal example.
+There are two ways to set up a sensitivity analysis with spamneggs; choose one:
+
+1. Edit an FEBio XML file, inserting special XML tags marking which values spamneggs should treat as parameters in the sensitivity analysis.
+2. Write a Python function that takes a collection of parameters as input and returns an FEBio XML tree.  At your discretion, the function might read an FEBio XML template and make a few strategic edits, or it might construct an FEBio model from scratch using a tool like [waffleiron](https://github.com/jpeloquin/waffleiron).
+
+An example of using a Python function to vary material properties in a template FEBio XML file is shown here:
+
+```python
+import spamneggs as spam
+from spamneggs.core import Parameter
+from spamneggs.variables import UniformScalar
+from spamneggs.febioxml import PlotfileSelector
+from waffleiron.input import read_febio_xml
+
+PARAMETERS = {
+    "NH E": Parameter(UniformScalar(0.1, 10), {"nominal": 0.2}),  # MPa
+    "NH ν": Parameter(UniformScalar(0.01, 0.3), {"nominal": 0.01}),
+    "Perm κ": Parameter(
+        UniformScalar(5e-4, 5e-3), {"nominal": 2.4e-3}
+    ),  # mm^4/Ns
+}
+
+def gen_model(case, basefile="Sophia_models/bov_ch_medmen-r_02_-_biphasicSR.feb"):
+    """Substitute material parameters in template FEBio XML"""
+    xml = read_febio_xml(basefile)
+    # Substitute neo-Hookean parameters
+    e = xml.find(
+        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/E"
+    )
+    e.text = f"{case.parameters['NH E']:.5f}"
+    e = xml.find(
+        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/v"
+    )
+    e.text = f"{case.parameters['NH ν']:.5f}"
+    # Substitute permeability parameter
+    e = xml.find("Material/material[@type='biphasic']/permeability/perm")
+    e.text = f"{case.parameters['Perm κ']:.5f}"
+    return xml
+
+def main(nlevels):
+    variables = {
+        "Fx": PlotfileSelector.from_expr("node[1220].domain[0].'reaction forces'[1]"),
+    }
+    analysis = spam.Analysis(
+        gen_model,
+        PARAMETERS,
+        variables,
+        name=f"readme_example_n={nlevels}",
+    )
+    spam.run_sensitivity(analysis, nlevels, on_case_error="ignore")
+
+if __name__ == "__main__":
+    main(3)
+```
 
 ## Support
 
