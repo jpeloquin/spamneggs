@@ -1885,7 +1885,7 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     n_plots = n_levels + 1 if named_cases is not None else n_levels
     # Create figure
     fig = Figure(constrained_layout=True)
-    nh = math.floor(n_plots ** 0.5)
+    nh = math.floor(n_plots**0.5)
     nw = math.ceil(n_plots / nh)
     fig.set_size_inches((5 * nw + 1, 3 * nh + 0.25))  # TODO: set smart size
     fig.set_constrained_layout_pads(
@@ -2068,7 +2068,7 @@ def fig_tsvar_pdf(
     steps = tsdata["Step"].unique()
     # Calculate the number of subplots
     n_plots = len(levels) + 1 if named_cases is not None else len(levels)
-    nh = math.floor(n_plots ** 0.5)
+    nh = math.floor(n_plots**0.5)
     nw = math.ceil(n_plots / nh)
     # Create figure
     fig = Figure(constrained_layout=True)
