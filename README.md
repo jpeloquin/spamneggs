@@ -29,7 +29,7 @@ spamneggs is licensed under the [AGPLv3](LICENSE).  You should read the entire l
 
 Spamneggs depends on:
 - A working Python ≥ 3.8 environment with the public packages numpy, pandas, sklearn, matplotlib, lxml, and pathos; and my packages [waffleiron](https://github.com/jpeloquin/waffleiron) and (optionally; only used for some error checks) [prunetest](https://github.com/jpeloquin/prunetest).
-- A working FEBio installation.  By default, waffleiron uses the command `febio` to start an FEBio process, but if the environment variable `FEBIO_CMD` is defined its value will be used to start an FEBio process.
+- A working FEBio installation.  By default, waffleiron uses the command `febio` to start an FEBio process, but if the environment variable `FEBIO_CMD` is defined its value will be used instead.
 
 There are two ways to set up a sensitivity analysis with spamneggs; choose one:
 
@@ -90,11 +90,17 @@ if __name__ == "__main__":
 
 Please feel free to [raise an issue](https://github.com/jpeloquin/spamneggs/issues) to ask for assistance and I will help if able.  Due to the recency of spamneggs' release into the wild there are likely many difficulties to smooth over and I would like to hear about any you encounter.
 
-Note however that responsibility for the accuracy or usefulness of any results you produce lies with you.  (See the license's disclaimer of fitness for any particular purpose.)  If you want me to verify that you are using the software in the correct manner and it is operating correctly, please contact me through the [Delaware Center for Musculoskeletal Research](https://sites.udel.edu/engr-dcmr/) to arrange for collaboration or contract work.
+Note however that responsibility for the accuracy or usefulness of any results you produce lies with you.  (See the license's disclaimer of fitness for any particular purpose.)
+If you want me to verify that you are using the software in the correct manner and it is operating correctly, please contact me through the [Delaware Center for Musculoskeletal Research](https://sites.udel.edu/engr-dcmr/) (DCMR) to arrange contract work or collaboration.
 
 # Contributing
 
-Contributions require a contributor license agreement (CLA).  The main motivation is to allow spamneggs to be re-licensed for use cases that were not originally anticipated.  This decision was made with the assumption that vast majority of contributions will continue to be made by the original authors.  While the CLA process is being worked on, please raise an issue if you wish to contribute.
+Contributions to the codebase require a contributor license agreement (CLA).
+The main motivation is to allow spamneggs to be re-licensed for use cases that were not originally anticipated, including commercialization (albeit, seemingly unlikely at present).
+This decision was made with the assumption that vast majority of contributions will continue to be made by the original author.
+Please raise an issue or contact me through [DCMR](https://sites.udel.edu/engr-dcmr/) (DCMR) if you wish to contribute code.
+
+To contribute documentation or other non-code resources to the spamneggs repo, please release it as [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 
 # Similar packages
 
