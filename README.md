@@ -42,45 +42,38 @@ An example of using a Python function to vary material properties in a template 
 import spamneggs as spam
 from spamneggs.core import Parameter
 from spamneggs.variables import UniformScalar
-from spamneggs.febioxml import PlotfileSelector
+from spamneggs.febioxml import XpltDataSelector
 from waffleiron.input import read_febio_xml
 
-PARAMETERS = {
-    "NH E": Parameter(UniformScalar(0.1, 10), {"nominal": 0.2}),  # MPa
+PARAMETERS = {"NH E": Parameter(UniformScalar(0.1, 10), {"nominal": 0.2}),  # MPa
     "NH ν": Parameter(UniformScalar(0.01, 0.3), {"nominal": 0.01}),
-    "Perm κ": Parameter(
-        UniformScalar(5e-4, 5e-3), {"nominal": 2.4e-3}
-    ),  # mm^4/Ns
+    "Perm κ": Parameter(UniformScalar(5e-4, 5e-3), {"nominal": 2.4e-3}),  # mm^4/Ns
 }
+
 
 def gen_model(case, basefile="Sophia_models/bov_ch_medmen-r_02_-_biphasicSR.feb"):
     """Substitute material parameters in template FEBio XML"""
     xml = read_febio_xml(basefile)
     # Substitute neo-Hookean parameters
     e = xml.find(
-        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/E"
-    )
+        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/E")
     e.text = f"{case.parameters['NH E']:.5f}"
     e = xml.find(
-        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/v"
-    )
+        "Material/material[@type='biphasic']/solid/solid[@type='neo-Hookean']/v")
     e.text = f"{case.parameters['NH ν']:.5f}"
     # Substitute permeability parameter
     e = xml.find("Material/material[@type='biphasic']/permeability/perm")
     e.text = f"{case.parameters['Perm κ']:.5f}"
     return xml
 
+
 def main(nlevels):
     variables = {
-        "Fx": PlotfileSelector.from_expr("node[1220].domain[0].'reaction forces'[1]"),
-    }
-    analysis = spam.Analysis(
-        gen_model,
-        PARAMETERS,
-        variables,
-        name=f"readme_example_n={nlevels}",
-    )
+        "Fx": XpltDataSelector.from_expr("node[1220].domain[0].'reaction forces'[1]"), }
+    analysis = spam.Analysis(gen_model, PARAMETERS, variables,
+        name=f"readme_example_n={nlevels}", )
     spam.run_sensitivity(analysis, nlevels, on_case_error="ignore")
+
 
 if __name__ == "__main__":
     main(3)

@@ -27,7 +27,7 @@ TAG_FOR_ENTITY_TYPE = {
 }
 
 
-# TODO: FunctionVar, PlotfileSelector, and TextdataSelector shouldn't be
+# TODO: FunctionVar, XpltDataSelector, and TextDataSelector shouldn't be
 # in febioxml.py, since they're fundamental datatypes for spamneggs, but
 # they use parse_var_selector, so they're here to avoid a circular
 # import.  Organize the files better later.
@@ -60,7 +60,7 @@ class TimeSeries:
                 )
 
 
-class PlotfileSelector:
+class XpltDataSelector:
     def __init__(
         self,
         variable,
@@ -101,7 +101,7 @@ class PlotfileSelector:
         )
 
 
-class TextdataSelector:
+class TextDataSelector:
     def __init__(self, variable, temporality, time, time_unit, entity, entity_id):
         if __debug__:
             _validate_time_selector(temporality, time, time_unit)
@@ -283,10 +283,10 @@ def required_outputs(variables):
     }
     plotfile_selections = set()
     for nm, var in variables.items():
-        if isinstance(var, TextdataSelector):
+        if isinstance(var, TextDataSelector):
             logfile_selections[var.entity]["vars"].add(var.variable)
             logfile_selections[var.entity]["ids"].add(var.entity_id)
-        elif isinstance(var, PlotfileSelector):
+        elif isinstance(var, XpltDataSelector):
             plotfile_selections.add(var.variable)
     return logfile_selections, plotfile_selections
 
@@ -399,9 +399,9 @@ def get_variables(tree):
     variables = {}
     for e in tree.findall("preprocessor/analysis/variables/var"):
         if e.attrib["source"] == "logfile":
-            var = TextdataSelector.from_expr(e.text)
+            var = TextDataSelector.from_expr(e.text)
         elif e.attrib["source"] == "plotfile":
-            var = PlotfileSelector.from_expr(e.text)
+            var = XpltDataSelector.from_expr(e.text)
         elif e.attrib["source"] == "function":
             raise NotImplementedError
         else:
@@ -429,7 +429,7 @@ def tabulate_case(case):
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {}, "time series variables": {}}
     for varname, var in case.variables.items():
-        if isinstance(var, PlotfileSelector):
+        if isinstance(var, XpltDataSelector):
             xplt_data = case.solution.solution
             # Check component selector validity
             dtype = xplt_data.variables[var.variable]["type"]
@@ -484,7 +484,7 @@ def tabulate_case(case):
                     "steps": np.array(range(len(xplt_data.step_times))),
                     "values": values,
                 }
-        elif isinstance(var, TextdataSelector):
+        elif isinstance(var, TextDataSelector):
             # Apply entity type selector
             tab = text_data[var.entity]
             # Apply entity ID selector
