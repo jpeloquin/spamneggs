@@ -1824,6 +1824,8 @@ def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
             # the probability density plot.
             vmin = tsdata[f"{variable} [var]"].min()
             vmax = tsdata[f"{variable} [var]"].max()
+            if vmin == vmax:
+                raise ValueError(f"Variable {variable} has a constant value, {vmin}, so it is not appropriate to estimate its probability density function.")
             yrange_all = (vmin, vmax)
             idx_steps = tsdata["Step"].unique()
             quantile_levels = (0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
