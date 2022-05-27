@@ -414,13 +414,14 @@ def get_variables(tree):
 
 def tabulate_case(case):
     """Tabulate variables for a single analysis case."""
-    case_tree = read_febio_xml(case.sim_file)
+    case_tree = read_febio_xml(case.feb_file)
     # Read the text data files
+    # TODO: Finding the text data XML elements should probably be done in Waffleiron.  Need to move this function to spamneggs.py so we can annotate the type of the arguments.
     text_data = {}
     for entity_type in ("node", "element", "body", "connector"):
         tagname = TAG_FOR_ENTITY_TYPE[entity_type]
-        fname = case.sim_file.with_suffix("").name + f"_-_{tagname}.txt"
-        pth = case.sim_file.parent / fname
+        fname = case.feb_file.with_suffix("").name + f"_-_{tagname}.txt"
+        pth = case.feb_file.parent / fname
         e_textdata = case_tree.find(f"Output/logfile/{tagname}[@file='{fname}']")
         if e_textdata is not None:
             text_data[entity_type] = textdata_table(pth)
@@ -428,7 +429,7 @@ def tabulate_case(case):
             text_data[entity_type] = None
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {}, "time series variables": {}}
-    for varname, var in case.variables.items():
+    for varname, var in case.variables_list.items():
         if isinstance(var, XpltDataSelector):
             xplt_data = case.solution.solution
             # Check component selector validity

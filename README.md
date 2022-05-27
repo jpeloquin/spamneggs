@@ -46,9 +46,10 @@ from spamneggs.febioxml import XpltDataSelector
 from waffleiron.input import read_febio_xml
 
 PARAMETERS = {"NH E": Parameter(UniformScalar(0.1, 10), {"nominal": 0.2}),  # MPa
-    "NH ν": Parameter(UniformScalar(0.01, 0.3), {"nominal": 0.01}),
-    "Perm κ": Parameter(UniformScalar(5e-4, 5e-3), {"nominal": 2.4e-3}),  # mm^4/Ns
-}
+              "NH ν": Parameter(UniformScalar(0.01, 0.3), {"nominal": 0.01}),
+              "Perm κ": Parameter(UniformScalar(5e-4, 5e-3), {"nominal": 2.4e-3}),
+              # mm^4/Ns
+              }
 
 
 def gen_model(case, basefile="Sophia_models/bov_ch_medmen-r_02_-_biphasicSR.feb"):
@@ -70,8 +71,8 @@ def gen_model(case, basefile="Sophia_models/bov_ch_medmen-r_02_-_biphasicSR.feb"
 def main(nlevels):
     variables = {
         "Fx": XpltDataSelector.from_expr("node[1220].domain[0].'reaction forces'[1]"), }
-    analysis = spam.Analysis(gen_model, PARAMETERS, variables,
-        name=f"readme_example_n={nlevels}", )
+    analysis = spam.CaseGenerator(gen_model, PARAMETERS, variables,
+                                  name=f"readme_example_n={nlevels}", )
     spam.run_sensitivity(analysis, nlevels, on_case_error="ignore")
 
 

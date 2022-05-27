@@ -12,6 +12,9 @@ class ContinuousScalar(Scalar):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+    def sensitivity_levels(self, n):
+        raise NotImplementedError
+
 
 class UniformScalar(ContinuousScalar):
     def __init__(self, lb, ub, **kwargs):
