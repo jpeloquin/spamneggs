@@ -10,25 +10,9 @@ from numbers import Number
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Sequence, Tuple, Union
 
-# In-house packages
-from lxml import etree
-from pandas import CategoricalDtype, DataFrame
-from pint import Quantity
-from sklearn.neighbors import KernelDensity
-
-import waffleiron as wfl
-
 # Third-party packages
-import pandas as pd
-import psutil
 import scipy.cluster
-
-from waffleiron import Model
-from waffleiron.febio import (
-    FEBioError,
-    CheckError,
-    run_febio_checked,
-)
+from lxml import etree
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import ticker
@@ -37,7 +21,21 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Bbox
+import pandas as pd
+from pandas import CategoricalDtype, DataFrame
 from pathos.pools import ProcessPool
+from pint import Quantity
+import psutil
+from sklearn.neighbors import KernelDensity
+
+# In-house packages
+import waffleiron as wfl
+from waffleiron import Model
+from waffleiron.febio import (
+    FEBioError,
+    CheckError,
+    run_febio_checked,
+)
 
 # Same-package modules
 from . import colors
