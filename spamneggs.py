@@ -86,6 +86,9 @@ class Success:
     def __str__(self):
         return "Success"
 
+    def __repr__(self):
+        return "Success"
+
     def __eq__(self, other):
         return other.__class__ == self.__class__
 
