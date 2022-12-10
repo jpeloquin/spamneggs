@@ -267,7 +267,7 @@ class CaseGenerator:
         if not self.directory.exists():
             self.directory.mkdir()
 
-    def generate_case(self, name, parameter_values, sub_dir=None):
+    def generate_case(self, name, parameter_values, sub_dir=None) -> Case:
         """Return a Case and create its backing files"""
         if sub_dir is None:
             directory = self.directory
