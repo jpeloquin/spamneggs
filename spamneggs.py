@@ -196,7 +196,7 @@ class Case:
         """
         # Verify that the simulation file can be loaded at all.  If it cannot,
         # we won't be able to extract data from it later anyway.
-        model = wfl.load_model(self.feb_file)
+        model = wfl.load_model(self.feb_file, read_xplt=False)
         # Verify that simulation file uses must points.  If it does not, the return
         # values from the various cases will not be at the same times, and any
         # sensitivity analysis will be invalid.
