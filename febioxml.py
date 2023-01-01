@@ -208,12 +208,15 @@ def parse_var_selector(text):
         # proper IDs
         var_info["entity ID"] = entity_id[0]
     else:
-        # Nodes, canonical face tuples, and elements have 0-indexed IDs
-        # as far as waffleiron and spamneggs are concerned
+        # Nodes, canonical face tuples, and elements have 0-indexed IDs as far as
+        # waffleiron and spamneggs are concerned
         if hasattr(entity_id[0], "__iter__"):
             var_info["entity ID"] = tuple(a - 1 for a in entity_id[0])
         else:
-            var_info["entity ID"] = entity_id[0] - 1
+            id_ = entity_id[0]
+            if id_ < 1:
+                raise ValueError(f"Was given an entity ID of {entity_id[0]}.  Spamneggs' variable selector syntax uses 1-indexed node, face, and element IDs for consistency with FEBio.")
+            var_info["entity ID"] = id_ - 1
     # Region selector (optional)
     if parts:
         region_type, region_id = _parse_selector_part(parts.pop(-1))
