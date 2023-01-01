@@ -1052,7 +1052,14 @@ def makefig_error_pdf_biparam(analysis):
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
 
-    def p_error(cases, error_code, parameter1: Parameter, levels1, parameter2: Parameter, levels2):
+    def p_error(
+        cases,
+        error_code,
+        parameter1: Parameter,
+        levels1,
+        parameter2: Parameter,
+        levels2,
+    ):
         """Return p(error | parameter1, parameter2)"""
         p = np.full((len(levels1), len(levels2)), np.nan)
         x = np.full((len(levels1), len(levels2), 2), np.nan)
