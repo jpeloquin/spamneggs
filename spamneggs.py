@@ -412,24 +412,37 @@ def _validate_opt_on_case_error(value):
         )
 
 
-def cases_table(parallel_output, step="Generate"):
+def cases_table(case_generator, parallel_output, step="Generate"):
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
     # conflicts.
-    data: Dict[str, Dict] = defaultdict(dict)
+    #
+    # Create column names.  Do this explicitly so if there is no output to process we
+    # still get a valid (empty) table.
+    data = {"ID": []}
+    for p in case_generator.parameters:
+        data[p.name] = []
+    data["status"] = []
+    data["path"] = []
+    # For each case's output, add a row
     for nm, output in parallel_output.items():
         case = output["Case"]
-        for p, v in case.parameters_n.items():
-            data[case.name][p] = v
+        # ID
+        data["ID"].append(nm)
+        # Parameters
+        for p in case_generator.parameters:
+            data[p.name].append(case.parameters_n[p.name])
+        # Status
         status = output["Status"]
         if status == SUCCESS:
             msg = f"{step}: {status}"
         else:
             msg = f"{step}: {', '.join(err for err in status)}"
-        data[case.name]["status"] = msg
-        data[case.name]["path"] = case.feb_file
-    tab = DataFrame.from_dict(data, orient="index")
+        data["status"].append(msg)
+        # File path
+        data["path"].append(case.feb_file)
+    tab = DataFrame(data)
     return tab
 
 
@@ -547,7 +560,7 @@ def run_sensitivity(
         pth_table = case_generator.directory / f"{name}_cases.csv"
         f = make_f_gen(case_generator, f"{name}_cases")
         output = do_parallel(parameter_values, f, on_case_error=on_case_error)
-        table = cases_table(output)
+        table = cases_table(case_generator, output)
         write_cases_table(table, pth_table)
         # Run the named cases
         cases = {nm: e["Case"] for nm, e in output.items()}
@@ -727,8 +740,6 @@ def tabulate(analysis: CaseGenerator):
         ivars_table["case"] = []  # force creation of the index column
         pth_cases = analysis.directory / f"{fbase}_cases.csv"
         cases = pd.read_csv(pth_cases, index_col=0)
-        if len(cases) == 0:
-            raise ValueError(f"No cases to tabulate in '{pth_cases}'")
         for i in cases.index:
             if not cases.loc[i, "status"] == "Run: Success":
                 # Simulation failure.  Don't bother trying to tabulate the results.
