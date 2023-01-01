@@ -611,21 +611,28 @@ def full_factorial_values(parameters, distributions, nlevels):
     levels = {}
     # Calculate each parameter's levels
     for p in parameters:
-        distribution = distributions[p.name]
-        if isinstance(distribution, ContinuousScalar):
-            levels[p.name] = distribution.sensitivity_levels(nlevels)
-        elif isinstance(distribution, CategoricalScalar):
-            levels[p.name] = distribution.sensitivity_levels()
+        v = distributions[p.name]
+        if isinstance(v, ContinuousScalar):
+            levels[p.name] = v.sensitivity_levels(nlevels)
+        elif isinstance(v, CategoricalScalar):
+            levels[p.name] = v.sensitivity_levels()
         else:
-            raise ValueError(
-                f"Generating levels from a variable of type `{type(distribution)}` is not yet supported."
-            )
+            # Perhaps a scalar value?
+            try:
+                v = int(v)
+            except ValueError:
+                try:
+                    v = float(v)
+                except ValueError:
+                    raise ValueError(
+                        f"Generating levels from a variable of type `{type(v)}` is not yet supported."
+                    )
+            levels[p.name] = (v,)
     combinations = product(*(levels[p.name] for p in parameters))
     parameter_values = {
         i: {p.name: v for p, v in zip(parameters, values)}
         for i, values in enumerate(combinations)
     }
-
     return parameter_values
 
 
@@ -1201,9 +1208,9 @@ def get_reference_tsdata(analysis, tsdata, cases, named_cases):
         ]
     else:
         # Plot median generated case
-        param_values = {k: cases[k] for k in analysis.parameters}
+        param_values = {k: cases[k.name] for k in analysis.parameters}
         median_levels = {
-            k: values[len(values) // 2] for k, values in param_values.items()
+            k.name: values[len(values) // 2] for k, values in param_values.items()
         }
         m = np.ones(len(cases), dtype="bool")
         for param, med in median_levels.items():
@@ -1260,10 +1267,18 @@ def makefig_sensitivity_tsvar_all(
         analysis, correlations_table, ref_ts, norm="subvector"
     )
     # Estimate the rank of the sensitivity vectors
-    fig, svd_values = fig_corr_svd(correlations_table)
-    with open(analysis.directory / "sensitivity_ρ_stats.json", "w") as f:
-        json.dump(svd_values, f)
-    fig.savefig(analysis.directory / "sensitivity_ρ_singular_values.svg")
+    pth_svd_data = analysis.directory / "sensitivity_ρ_stats.json"
+    pth_svd_fig = analysis.directory / "sensitivity_ρ_singular_values.svg"
+    try:
+        fig, svd_values = fig_corr_svd(correlations_table)
+        with open(pth_svd_data, "w") as f:
+            json.dump(svd_values, f)
+        fig.savefig(pth_svd_fig)
+    except np.linalg.LinAlgError as e:
+        warn(f"Corroleation matrix SVD failed: {str(e)}")
+        # Don't leave files from a previous run (if any); that would confuse the user
+        pth_svd_data.unlink(missing_ok=True)
+        pth_svd_fig.unlink(missing_ok=True)
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
@@ -1672,23 +1687,31 @@ def makefig_sensitivity_tsvars_heatmap(
             )
             numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
     dist[numerator == 0] = 1
-    # Compute the linkages
-    links = scipy.cluster.hierarchy.linkage(
-        dist, method="average", metric="correlation"
-    )
-    dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax, orientation="left")
-    dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
-    dn_ax.set_ylabel("Parameters", fontsize=FONTSIZE_FIGLABEL)
-    dn_ax.tick_params(
-        bottom=False,
-        right=False,
-        left=False,
-        top=False,
-        labelbottom=False,
-        labelright=False,
-        labelleft=False,
-        labeltop=False,
-    )
+    # Compute the linkages (clusters), unless all the distances are NaN (e.g.,
+    # in a univariate sensitivity analysis)
+    if not np.all(np.isnan(dist)):
+        warn(
+            "Correlation distance matrix is all NaNs.  This is expected if only one parameter is varying."
+        )
+        links = scipy.cluster.hierarchy.linkage(
+            dist, method="average", metric="correlation"
+        )
+        dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax, orientation="left")
+        dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
+        dn_ax.set_ylabel("Parameters", fontsize=FONTSIZE_FIGLABEL)
+        dn_ax.tick_params(
+            bottom=False,
+            right=False,
+            left=False,
+            top=False,
+            labelbottom=False,
+            labelright=False,
+            labelleft=False,
+            labeltop=False,
+        )
+        ordered_parameter_idx = dn["leaves"]
+    else:
+        ordered_parameter_idx = np.arange(len(analysis.parameters))
     for spine in ["left", "right", "top", "bottom"]:
         dn_ax.spines[spine].set_visible(False)
 
@@ -1720,7 +1743,7 @@ def makefig_sensitivity_tsvars_heatmap(
     # Plot heatmaps
     for j in range(axarr.shape[1]):
         axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
-    for irow, iparam in enumerate(dn["leaves"]):
+    for irow, iparam in enumerate(ordered_parameter_idx):
         parameter = arr_parameters[iparam]
         if norm == "vector":
             absmax = np.max(np.abs(correlations.loc[parameter].values))
@@ -1817,7 +1840,9 @@ def makefig_sensitivity_tsvars_heatmap(
 
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
-    dist = scipy.spatial.distance.squareform(dist)[dn["leaves"], :][:, dn["leaves"]]
+    dist = scipy.spatial.distance.squareform(dist)[ordered_parameter_idx, :][
+        :, ordered_parameter_idx
+    ]
     fig = Figure()
     FigureCanvas(fig)
     # Set size to match number of variables
@@ -1880,8 +1905,8 @@ def makefig_sensitivity_tsvars_heatmap(
     )
     ax.set_yticks([i for i in reversed(range(len(analysis.parameters)))])
     # ^ reversed b/c origin="upper"
-    ax.set_xticklabels([arr_parameters[i] for i in dn["leaves"]])
-    ax.set_yticklabels([arr_parameters[i] for i in dn["leaves"]])
+    ax.set_xticklabels([arr_parameters[i] for i in ordered_parameter_idx])
+    ax.set_yticklabels([arr_parameters[i] for i in ordered_parameter_idx])
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
     ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
     #
@@ -2195,7 +2220,9 @@ def fig_tsvar_pdf(
         ).set_index("Step")
         p = np.full((len(x), len(steps)), np.nan)
         for step in steps:
-            v = stratum.loc[step][f"{variable} [var]"].array
+            v = stratum.loc[[step]][f"{variable} [var]"].array
+            # ^ wrap index in list literal so we always get a Series object
+
             # Use sklearn.neighbors.KernelDensity because it's robust to zero
             # variance.  scipy.stats.gaussian_kde is not; it tries to invert a matrix
             # that will be singular if all observations have the same value.  Note
