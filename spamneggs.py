@@ -1728,7 +1728,7 @@ def makefig_sensitivity_tsvars_heatmap(
         absmax = 1
         cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
     elif norm == "all":
-        absmax = np.max(np.abs(correlations.values))
+        absmax = np.nanmax(np.abs(correlations.values))
         cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
 
     # Draw the time series line plot in the first row
