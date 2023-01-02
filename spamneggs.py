@@ -1345,9 +1345,8 @@ def sobol_analysis_tsvars(analysis, tsdata, cases):
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
     S1 = {
-        p: {v: np.zeros(nsteps)}
+        p: {v: np.zeros(nsteps) for v in analysis.variables}
         for p in analysis.parameters
-        for v in analysis.variables
     }
     ST = deepcopy(S1)
     for v in analysis.variables:
