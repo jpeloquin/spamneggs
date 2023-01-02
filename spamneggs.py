@@ -1718,8 +1718,7 @@ def makefig_sensitivity_tsvars_heatmap(
         ordered_parameter_idx = dn["leaves"]
     else:
         ordered_parameter_idx = np.arange(len(analysis.parameters))
-    for spine in ["left", "right", "top", "bottom"]:
-        dn_ax.spines[spine].set_visible(False)
+    dn_ax.axis("off")
 
     # Create common axis elements for time series variable plots
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
