@@ -1309,7 +1309,7 @@ def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
             ylim[i, j] = ax.get_ylim()[1]
     # Add labels to the left side
     for i, p in enumerate(analysis.parameters):
-        axarr[i + 1, 0].set_ylabel(p, fontsize=FONTSIZE_AXLABEL)
+        axarr[i + 1, 0].set_ylabel(p.name, fontsize=FONTSIZE_AXLABEL)
     # Add legend
     for j, v in enumerate(analysis.variables):
         axarr[1, j].legend(
@@ -2058,9 +2058,9 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
             )
             value = cases.loc[case_id, subject_parameter.name]
             if subject_parameter.units == "1":
-                label = f"{value}"
+                label = f"{value:.3g}"
             else:
-                label = f"{value} {subject_parameter.units}"
+                label = f"{value:.3g} {subject_parameter.units:~P}"
             ax.plot(
                 tab_timeseries["Step"],
                 tab_timeseries[variable],
@@ -2140,9 +2140,9 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
         )
         value = named_cases.loc[case_id, parameter.name]
         if parameter.units == "1":
-            label = f"{case_id}; {parameter} = {value}"
+            label = f"{case_id}\n{parameter.name} = {value}"
         else:
-            label = f"{case_id}; {parameter} = {value} {parameter.units}"
+            label = f"{case_id}\n{parameter.name} = {value} {parameter.units:~P}"
         ax.plot(
             tab_timeseries["Step"],
             tab_timeseries[variable],
@@ -2250,9 +2250,13 @@ def fig_tsvar_pdf(
         cbar.set_label("Probability Density [1]", fontsize=FONTSIZE_TICKLABEL)
         cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
         # Labels
-        s_level = f"{level}" if parameter.units == "1" else f"{level} {parameter.units}"
+        s_level = (
+            f"{level:3g}"
+            if parameter.units == "1"
+            else f"{level:3g} {parameter.units:~P}"
+        )
         ax.set_title(
-            f"{parameter} = {s_level}",
+            f"{parameter.name} = {s_level}",
             fontsize=FONTSIZE_AXLABEL,
         )
         ax.set_xlabel("Time point [1]")
