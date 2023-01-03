@@ -442,7 +442,7 @@ def cases_table(case_generator, parallel_output, step="Generate"):
         data["status"].append(msg)
         # File path
         data["path"].append(case.feb_file)
-    tab = DataFrame(data)
+    tab = DataFrame(data).set_index("ID")
     return tab
 
 
@@ -562,7 +562,7 @@ def run_sensitivity(
         output = do_parallel(parameter_values, f, on_case_error=on_case_error)
         table = cases_table(case_generator, output)
         write_cases_table(table, pth_table)
-        # Run the named cases
+        # Run the cases
         cases = {nm: e["Case"] for nm, e in output.items()}
         output = do_parallel(cases, run_case, on_case_error=on_case_error)
         replace_status(table, output, step="Run")
