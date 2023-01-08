@@ -871,9 +871,23 @@ def makefig_sensitivity_all(analysis):
             analysis, param_names, param_values, ivar_names, ivar_values
         )
 
-    # Plots for time series variables
+    # Summarize time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, cases)
+        # Summarize time series variables' data in a table
+        tsvar_summary = (
+            tsdata[["Step", "Time"] + [f"{c} [var]" for c in analysis.variables.keys()]]
+            .groupby("Step")
+            .describe()
+        )
+        tsvar_summary.columns = [
+            f"{c[0].removesuffix(' [var]')}, {c[1]}" for c in tsvar_summary.columns
+        ]
+        tsvar_summary.reset_index().to_csv(
+            analysis.directory / "generated_cases_-_timeseries_var_summary.csv",
+            index=False,
+        )
+        # Plots for time series variables
         makefig_sensitivity_tsvar_all(analysis, tsvar_names, tsdata, cases, named_cases)
 
 
