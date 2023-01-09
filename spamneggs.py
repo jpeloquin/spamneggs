@@ -1231,7 +1231,7 @@ def get_reference_tsdata(analysis, tsdata, cases, named_cases):
         # Plot median generated case
         param_values = {k: cases[k.name] for k in analysis.parameters}
         median_levels = {
-            k.name: values[len(values) // 2] for k, values in param_values.items()
+            k.name: np.median(values) for k, values in param_values.items()
         }
         m = np.ones(len(cases), dtype="bool")
         for param, med in median_levels.items():
