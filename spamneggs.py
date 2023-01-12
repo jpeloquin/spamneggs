@@ -371,16 +371,20 @@ class FEBioXMLModel:
 def _trap_err(fun):
     """Wrap case-processing function to catch and return any errors"""
 
-    def wrapped(case):
+    def wrapped(args):
+        name, case = args
         try:
-            return fun(case)
+            return fun(args)
         except Exception as err:
-            print(f"Case {case}:")
+            print(f"Case {name}:")
             # For an error in Python code we want to print the traceback.  Special
             # simulation errors should be trapped elsewhere; only truly exceptional
             # exceptions should hit this trap.
             traceback.print_exc()
             print()
+            # PROBLEM: If this is being used for case generation, the input "case"
+            # object is probably a dictionary of parameter values rather than a case
+            # object, so we have an inconsistent return type.
             return case, err
 
     return wrapped
@@ -447,9 +451,17 @@ def cases_table(case_generator, parallel_output, step="Generate"):
 
 
 def do_parallel(cases: Mapping[str, object], fun, on_case_error="stop"):
+    # cases needs to be a mapping because do_parallel is used for both case
+    # generation and running cases.  During case generation, the name is separate
+    # from the parameter values.
     _validate_opt_on_case_error(on_case_error)  # TODO: Use enum
     output = {}
     pool = ProcessPool(nodes=NUM_WORKERS)
+    # TODO: Trapping every error, including Python errors, is a terrible system for
+    # reporting case generation and simulation errors.  Python errors should force
+    # termination as usual (so that you can use a debugger effectively), or at least
+    # this should be toggleable separately.  As-is, case generation must not fail,
+    # because then there is no Case object for the subsequent code paths.
     results = pool.map(_trap_err(lambda x: fun(*x)), cases.items())
     for case, status in results:
         # Log the run outcome
