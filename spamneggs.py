@@ -549,6 +549,13 @@ def run_sensitivity(
             if status == SUCCESS:
                 msg = f"{prefix}{status}"
             else:
+                # We assume status is iterable, but if status came from a captured
+                # error instead of the custom checks (which return a list of errors),
+                # it probably won't be iterable.  So we need to wrap it.
+                try:
+                    status = iter(status)
+                except TypeError:
+                    status = [status]
                 msg = f"{prefix}{', '.join(err.__class__.__name__ for err in status)}"
             table.loc[i, "status"] = msg
 
