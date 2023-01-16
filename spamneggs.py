@@ -244,8 +244,8 @@ class CaseGenerator:
         files will be created using the analysis name, so it is a
         required parameter.
 
-        parentdir := The directory in which the analysis folder will be
-        stored. Defaults to the current working directory.
+        parentdir := The directory in which the analysis folder will be stored. Defaults
+        to the current working directory.
 
         :param checks: Sequence of callables that take a waffleiron Model as their lone
         argument and should raise an exception if the check fails, or return None if the
@@ -832,7 +832,13 @@ def tab_tsvars_corrmap(analysis, tsdata, cov_zero_thresh=COV_ZERO_THRESH):
     return correlations
 
 
-def makefig_sensitivity_all(analysis):
+def makefig_sensitivity_all(analysis, tsfilter=None):
+    """Make all sensitivity analysis figures
+
+    :param tsfilter: Function that takes a timeseries data table, modifies it, and
+    returns it.
+
+    """
     # Named cases
     pth_cases = analysis.directory / f"named_cases.csv"
     named_cases = pd.read_csv(pth_cases, index_col=0)
@@ -893,6 +899,8 @@ def makefig_sensitivity_all(analysis):
     # Summarize time series variables
     if len(tsvar_names) > 0:
         tsdata = tabulate_analysis_tsvars(analysis, cases)
+        if tsfilter is not None:
+            tsdata = tsfilter(tsdata)
         # Summarize time series variables' data in a table
         tsvar_summary = (
             tsdata[["Step", "Time"] + [f"{c} [var]" for c in analysis.variables.keys()]]
