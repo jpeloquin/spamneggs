@@ -1,3 +1,4 @@
+from functools import cached_property
 import json
 import math
 import sys
@@ -97,6 +98,83 @@ class Success:
 
 
 SUCCESS = Success()
+
+
+class Analysis:
+    """Class storing analysis details for use after case generation"""
+
+    # TODO: Write JSON or XML serialization
+    def __init__(self, generator, mkdir=True):
+        self.name = None
+        # Directory containing generated_cases, case_output, etc.
+        self.base_directory = generator.directory
+        # Directory in which to write files from this analysis
+        self.directory = generator.directory
+        if mkdir:
+            self.directory.mkdir(exist_ok=True)
+        self.parameters = generator.parameters
+        self.variables = generator.variables
+
+    @cached_property
+    def table_named_cases(self):
+        pth_cases = self.base_directory / f"named_cases.csv"
+        named_cases = pd.read_csv(pth_cases, index_col=0)
+        return named_cases
+
+    @cached_property
+    def table_auto_cases(self):
+        pth_cases = self.base_directory / f"generated_cases.csv"
+        cases = pd.read_csv(pth_cases, index_col=0)
+        return cases
+
+    def case_data(self, case_id):
+        """Read variables from a single case analysis."""
+        pth_record = self.base_directory / "case_output" / f"{case_id}_vars.json"
+        pth_timeseries = self.base_directory / "case_output" / f"{case_id}_timeseries_vars.csv"
+        with open(pth_record, "r") as f:
+            record = json.load(f)
+        timeseries = pd.read_csv(pth_timeseries, index_col=False)
+        return record, timeseries
+
+    def cases_tsdata(self, cases=None):
+        """Return table of time series data for multiple cases
+
+        :param cases: Optional DataFrame of cases.  If provided, `cases_tsdata` will
+        return time series data only for those cases in `cases`.
+
+        The time series tables for the individual cases must have already been written
+        to disk.
+
+        """
+        if cases is None:
+            cases = self.table_auto_cases
+        # TODO: It would be beneficial to build up the whole-analysis time
+        # series table at the same time as case time series tables are
+        # written to disk, instead of re-reading everything from disk.
+        tsdata = DataFrame()
+        for i in cases.index:
+            pth_tsvars = (
+                self.base_directory / "case_output" / f"{i}_timeseries_vars.csv"
+            )
+            tsvars = pd.read_csv(pth_tsvars)
+            # Check for missing variables in the on-disk data
+            available_vars = set(tsvars.columns)
+            missing_vars = set(self.variables) - available_vars
+            if missing_vars:
+                raise ValueError(
+                    f"Did not find variable(s) {', '.join(missing_vars)} in file: {pth_tsvars}"
+                )
+            # Extra variables in the data on disk is ok, as one batch of simulations can
+            # support multiple analyses using different variables.  But there is no need
+            # to collect variables that this analysis did not ask for.
+            case_data = {"Case": i, "Step": tsvars["Step"], "Time": tsvars["Time"]}
+            case_data.update(
+                {f"{p.name} [param]": cases.loc[i, p.name] for p in self.parameters}
+            )
+            case_data.update({f"{v} [var]": tsvars[v] for v in self.variables})
+            case_data = DataFrame(case_data)
+            tsdata = pd.concat([tsdata, case_data])
+        return tsdata
 
 
 class Case:
@@ -239,14 +317,13 @@ class CaseGenerator:
         parentdir=None,
         checks: Sequence[Callable] = tuple(),
     ):
-        """Return Analysis object
+        """Return a CaseGenerator object
 
-        name := Name of the analysis. The folder containing the analysis
-        files will be created using the analysis name, so it is a
-        required parameter.
+        :param name: Name of the analysis.  Used as the name of folder containing all
+        generated files.
 
-        parentdir := The directory in which the analysis folder will be stored. Defaults
-        to the current working directory.
+        :parentdir: The parent directory in which to create the directory the generated
+        files.  Defaults to the current working directory.
 
         :param checks: Sequence of callables that take a waffleiron Model as their lone
         argument and should raise an exception if the check fails, or return None if the
@@ -685,18 +762,6 @@ def make_case_files(analysis, cases, on_case_error="stop"):
     return case_status
 
 
-def read_case_data(model_path):
-    """Read variables from a single case analysis."""
-    case_file = Path(model_path)
-    output_dir = model_path.parent / ".." / "case_output"
-    pth_record = output_dir / f"{model_path.stem}_vars.json"
-    pth_timeseries = output_dir / f"{model_path.stem}_timeseries_vars.csv"
-    with open(pth_record, "r") as f:
-        record = json.load(f)
-    timeseries = pd.read_csv(pth_timeseries, index_col=False)
-    return record, timeseries
-
-
 def tabulate_case_write(case, dir_out=None):
     """Tabulate variables for single case analysis & write to disk."""
     # Find/create output directory
@@ -708,53 +773,11 @@ def tabulate_case_write(case, dir_out=None):
         dir_out.mkdir()
     # Tabulate the variables
     record, timeseries = fx.tabulate_case(case)
-    with open(dir_out / f"case={case.name}_vars.json", "w") as f:
+    with open(dir_out / f"{case.name}_vars.json", "w") as f:
         write_record_to_json(record, f)
-    timeseries.to_csv(dir_out / f"case={case.name}_timeseries_vars.csv", index=False)
+    timeseries.to_csv(dir_out / f"{case.name}_timeseries_vars.csv", index=False)
     makefig_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
     return record, timeseries
-
-
-def tabulate_analysis_tsvars(analysis, cases):
-    """Tabulate time series variables for all cases in an analysis
-
-    The time series tables for the individual cases must have already
-    been written to disk.
-
-    :analysis: Analysis object.
-
-    :cases: DataFrame of cases to tabulate, usually obtained by reading
-    generated_cases.csv or named_cases.csv from the analysis directory.
-
-    """
-    # TODO: It would be beneficial to build up the whole-analysis time
-    # series table at the same time as case time series tables are
-    # written to disk, instead of re-reading everything from disk.
-    analysis_data = DataFrame()
-    for i in cases.index:
-        pth_tsvars = (
-            analysis.directory / "case_output" / f"case={i}_timeseries_vars.csv"
-        )
-        tsvars = pd.read_csv(pth_tsvars)
-        # Check for missing variables in the on-disk data
-        available_vars = set(tsvars.columns)
-        missing_vars = set(analysis.variables) - available_vars
-        if missing_vars:
-            raise ValueError(
-                f"Did not find variable(s) {', '.join(missing_vars)} in file: {pth_tsvars}"
-            )
-        # The presence of extra variables in the data on disk should not be cause for
-        # alarm.  One batch of simulations can support multiple analysis, and a given
-        # analysis may not use all of the available variables.  But we do not want to
-        # collect variables that the analysis did not ask for.
-        case_data = {"Case": i, "Step": tsvars["Step"], "Time": tsvars["Time"]}
-        case_data.update(
-            {f"{p.name} [param]": cases.loc[i, p.name] for p in analysis.parameters}
-        )
-        case_data.update({f"{v} [var]": tsvars[v] for v in analysis.variables})
-        case_data = DataFrame(case_data)
-        analysis_data = pd.concat([analysis_data, case_data])
-    return analysis_data
 
 
 def tabulate(analysis: CaseGenerator):
@@ -840,27 +863,22 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
     returns it.
 
     """
+    # For temporary backwards compatibility
+    if isinstance(analysis, CaseGenerator):
+        analysis = Analysis(analysis)
     # Named cases
-    pth_cases = analysis.directory / f"named_cases.csv"
-    named_cases = pd.read_csv(pth_cases, index_col=0)
-    # Named cases are manually constructed and so should converge.  If
-    # they do not, it's probably a user problem.  But you still need to
-    # see what happened when there's an error, so the plotting function
-    # should press on.
+    named_cases = analysis.table_named_cases
+    # Named cases are manually constructed and so should converge.  If they do not, it's
+    # probably a user problem.  But you still  need to see what happened when there's an
+    # error, so the plotting function should press on.
     named_cases = named_cases[named_cases["status"] == "Run: Success"]
 
     # Sensitivity cases
-    pth_cases = analysis.directory / f"generated_cases.csv"
-    cases = pd.read_csv(pth_cases, index_col=0)
+    cases = analysis.table_auto_cases
     cases = cases[cases["status"] == "Run: Success"]
 
     # Read parameters
-    #
-    # TODO: Add a function to get the list of parameters and variables
-    # for an analysis up-front.  Extract the relevant code from
-    # tabulate_case.
-    param_names = [k for k in cases.columns if k not in ["case", "path", "status"]]
-    param_values = {k: cases[k] for k in param_names}
+    param_values = {p.name: cases[p.name] for p in analysis.parameters}
 
     # Get variable names
     ivar_names = [
@@ -899,7 +917,7 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
 
     # Summarize time series variables
     if len(tsvar_names) > 0:
-        tsdata = tabulate_analysis_tsvars(analysis, cases)
+        tsdata = analysis.cases_tsdata(cases)
         if tsfilter is not None:
             tsdata = tsfilter(tsdata)
         # Summarize time series variables' data in a table
@@ -922,9 +940,7 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
 def makefig_error_counts(analysis):
     """Plot error proportions and correlations"""
     # Collect error counts from cases table
-    cases, error_codes = expand_run_errors(
-        pd.read_csv(analysis.directory / f"generated_cases.csv")
-    )
+    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
     outcome_count = dict(cases["Run Status"].value_counts())
     error_count = {code: cases[code].sum() for code in error_codes}
     # Plot outcome & error counts
@@ -1015,10 +1031,7 @@ def makefig_error_counts(analysis):
 
 def makefig_error_pdf_uniparam(analysis):
     """For each parameter write figure with conditional error PDFs"""
-    # TODO: Duplicated with makefig_error_counts
-    cases, error_codes = expand_run_errors(
-        pd.read_csv(analysis.directory / f"generated_cases.csv", index_col=0)
-    )
+    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
 
@@ -1087,10 +1100,7 @@ def makefig_error_pdf_uniparam(analysis):
 
 def makefig_error_pdf_biparam(analysis):
     """For each parameter pair write figure with conditional error PDFs"""
-    # TODO: Duplicated with makefig_error_counts
-    cases, error_codes = expand_run_errors(
-        pd.read_csv(analysis.directory / f"generated_cases.csv")
-    )
+    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
 
@@ -1264,7 +1274,9 @@ def get_reference_tsdata(analysis, tsdata, cases, named_cases):
         param_nlevels = {k: len(np.unique(v)) for k, v in param_values.items()}
         if any([n % 2 == 0 for n in param_nlevels.values()]):
             # The median parameter values are not represented in the cases
-            warn("With an even number of parameter levels, there is no case with median parameter values to serve as a representative case.  A random case will be selected as the representative case.")
+            warn(
+                "With an even number of parameter levels, there is no case with median parameter values to serve as a representative case.  A random case will be selected as the representative case."
+            )
             candidates = cases[cases["status"] == f"Run: {SUCCESS}"]
             case_id = candidates.index[len(candidates) // 2]
         else:
@@ -2105,9 +2117,7 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
         # Plot a line for each sensitivity level of the subject parameter
         for case_id in cases.index[m]:
-            record, tab_timeseries = read_case_data(
-                analysis.directory / cases.loc[case_id, "path"]
-            )
+            record, tab_timeseries = analysis.case_data(case_id)
             value = cases.loc[case_id, subject_parameter.name]
             if subject_parameter.units == "1":
                 label = f"{value:.3g}"
