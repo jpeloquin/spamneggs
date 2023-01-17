@@ -2201,7 +2201,8 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
             label=label,
             color=colors.categorical_n7[i % len(colors.categorical_n7)],
         )
-    ax.legend()
+    if ax.lines:
+        ax.legend()
 
 
 def fig_corr_svd(correlations_table):
