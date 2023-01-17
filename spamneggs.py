@@ -9,6 +9,7 @@ from itertools import product
 from numbers import Number
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Sequence, Tuple, Union
+from warnings import warn
 
 # Third-party packages
 import scipy.cluster
@@ -1255,16 +1256,26 @@ def get_reference_tsdata(analysis, tsdata, cases, named_cases):
             f"{s} [var]" if not s in ("Time", "Step") else s for s in ref_ts.columns
         ]
     else:
-        # Plot median generated case
+        # Return values for median generated case, if possible
+        #
+        # TODO: It should be easier  to get  the levels of  an analysis, or  the median
+        # should be calculated based on the variables rather than the parameters.
         param_values = {k: cases[k.name] for k in analysis.parameters}
-        median_levels = {
-            k.name: np.median(values) for k, values in param_values.items()
-        }
-        m = np.ones(len(cases), dtype="bool")
-        for param, med in median_levels.items():
-            m = np.logical_and(m, cases[param] == med)
-        assert np.sum(m) == 1
-        case_id = cases.index[m][0]
+        param_nlevels = {k: len(np.unique(v)) for k, v in param_values.items()}
+        if any([n % 2 == 0 for n in param_nlevels.values()]):
+            # The median parameter values are not represented in the cases
+            warn("With an even number of parameter levels, there is no case with median parameter values to serve as a representative case.  A random case will be selected as the representative case.")
+            candidates = cases[cases["status"] == f"Run: {SUCCESS}"]
+            case_id = candidates.index[len(candidates) // 2]
+        else:
+            median_levels = {
+                k.name: np.median(values) for k, values in param_values.items()
+            }
+            m = np.ones(len(cases), dtype="bool")
+            for param, med in median_levels.items():
+                m = np.logical_and(m, cases[param] == med)
+            assert np.sum(m) == 1
+            case_id = cases.index[m][0]
         ref_ts = tsdata[tsdata["Case"] == case_id]
     return ref_ts
 
