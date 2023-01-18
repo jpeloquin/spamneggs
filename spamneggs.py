@@ -139,8 +139,10 @@ class Analysis:
     def cases_tsdata(self, cases=None):
         """Return table of time series data for multiple cases
 
-        :param cases: Optional DataFrame of cases.  If provided, `cases_tsdata` will
-        return time series data only for those cases in `cases`.
+        :param cases: Optional DataFrame of cases.  If `cases` is provided,
+        `cases_tsdata` will return time series data for the cases tabulated therein.  By
+        default, `cases_tsdata` will return time series data for all cases in
+        `self.table_auto_cases`.
 
         The time series tables for the individual cases must have already been written
         to disk.
@@ -148,11 +150,15 @@ class Analysis:
         """
         if cases is None:
             cases = self.table_auto_cases
+            cases = cases[cases["status"] == f"Run: {SUCCESS}"]
         # TODO: It would be beneficial to build up the whole-analysis time
         # series table at the same time as case time series tables are
         # written to disk, instead of re-reading everything from disk.
         tsdata = DataFrame()
         for i in cases.index:
+            # It's tempting to store NaN values for cases with incomplete simulations,
+            # but then we'd need to choose the time points at which to store those NaN
+            # values, which is somewhat complicated.
             pth_tsvars = (
                 self.base_directory / "case_output" / f"{i}_timeseries_vars.csv"
             )
