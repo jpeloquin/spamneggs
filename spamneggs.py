@@ -2221,7 +2221,7 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
         ax.legend()
 
 
-def fig_corr_svd(correlations_table):
+def fig_corr_svd(correlations_table, cutoff=0.01):
     correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
     arr = correlations.unstack(["Variable", "Time Point"]).values
     u, s, vh = np.linalg.svd(arr.T)
@@ -2232,10 +2232,12 @@ def fig_corr_svd(correlations_table):
     FigureCanvas(fig)
     ax = fig.add_subplot()
     x = 1 + np.arange(len(s))
-    ax.bar(x, s)
+    ax.axhline(100 * cutoff, color=COLOR_DEEMPH, lw=1)
+    ax.bar(x, 100 * s / np.sum(s))
+    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel("Eigenvalue [%]", fontsize=FONTSIZE_AXLABEL)
     for k in ax.spines:
         ax.spines[k].set_visible(False)
-    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
     ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
     ax.tick_params(
         axis="x",
@@ -2243,7 +2245,6 @@ def fig_corr_svd(correlations_table):
         labelsize=FONTSIZE_TICKLABEL,
         labelcolor=COLOR_DEEMPH,
     )
-    ax.set_ylabel("Eigenvalue", fontsize=FONTSIZE_AXLABEL)
     ax.tick_params(
         axis="y",
         color=COLOR_DEEMPH,
