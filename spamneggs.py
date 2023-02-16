@@ -10,14 +10,12 @@ from itertools import product
 from numbers import Number
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Sequence, Tuple, Union
-from warnings import warn
 
 # Third-party packages
 import scipy.cluster
 from lxml import etree
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib import ticker
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.cm import ScalarMappable
 from matplotlib.figure import Figure
