@@ -910,13 +910,11 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
             # re-use it here instead of re-reading the analysis XML for
             # every case.  However, to do this the case generation must not
             # alter the analysis XML tree.
-            record, tab_timeseries = read_case_data(
-                analysis.directory / cases["path"].loc[i]
-            )
+            record, tab_timeseries = analysis.case_data(i)
             for nm in ivar_names:
                 ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
         makefig_sensitivity_ivar_all(
-            analysis, param_names, param_values, ivar_names, ivar_values
+            analysis, param_values, ivar_names, ivar_values
         )
 
     # Summarize time series variables
@@ -1187,8 +1185,9 @@ def makefig_error_pdf_biparam(analysis):
 
 
 def makefig_sensitivity_ivar_all(
-    analysis, param_names, param_values, ivar_names, ivar_values
+    analysis, param_values, ivar_names, ivar_values
 ):
+    param_names = [p.name for p in analysis.parameters]
     # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
     npanels_h = len(ivar_names) + 1
@@ -1264,8 +1263,7 @@ def makefig_sensitivity_ivar_all(
 def get_reference_tsdata(analysis, tsdata, cases, named_cases):
     if "nominal" in named_cases.index:
         # Plot nominal case
-        pth = analysis.directory / named_cases.loc["nominal", "path"]
-        record, ref_ts = read_case_data(pth)
+        record, ref_ts = analysis.case_data("nominal")
         ref_ts.columns = [
             f"{s} [var]" if not s in ("Time", "Step") else s for s in ref_ts.columns
         ]
@@ -2201,9 +2199,7 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
     for i, case_id in enumerate(named_cases.index):
-        record, tab_timeseries = read_case_data(
-            analysis.directory / named_cases.loc[case_id, "path"]
-        )
+        record, tab_timeseries = analysis.case_data(case_id)
         value = named_cases.loc[case_id, parameter.name]
         if parameter.units == "1":
             label = f"{case_id}\n{parameter.name} = {value}"
