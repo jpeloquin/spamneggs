@@ -215,7 +215,9 @@ def parse_var_selector(text):
         else:
             id_ = entity_id[0]
             if id_ < 1:
-                raise ValueError(f"Was given an entity ID of {entity_id[0]}.  Spamneggs' variable selector syntax uses 1-indexed node, face, and element IDs for consistency with FEBio.")
+                raise ValueError(
+                    f"Was given an entity ID of {entity_id[0]}.  Spamneggs' variable selector syntax uses 1-indexed node, face, and element IDs for consistency with FEBio."
+                )
             var_info["entity ID"] = id_ - 1
     # Region selector (optional)
     if parts:

@@ -128,7 +128,9 @@ class Analysis:
     def case_data(self, case_id):
         """Read variables from a single case analysis."""
         pth_record = self.base_directory / "case_output" / f"{case_id}_vars.json"
-        pth_timeseries = self.base_directory / "case_output" / f"{case_id}_timeseries_vars.csv"
+        pth_timeseries = (
+            self.base_directory / "case_output" / f"{case_id}_timeseries_vars.csv"
+        )
         with open(pth_record, "r") as f:
             record = json.load(f)
         timeseries = pd.read_csv(pth_timeseries, index_col=False)
@@ -913,9 +915,7 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
             record, tab_timeseries = analysis.case_data(i)
             for nm in ivar_names:
                 ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
-        makefig_sensitivity_ivar_all(
-            analysis, param_values, ivar_names, ivar_values
-        )
+        makefig_sensitivity_ivar_all(analysis, param_values, ivar_names, ivar_values)
 
     # Summarize time series variables
     if len(tsvar_names) > 0:
@@ -1184,9 +1184,7 @@ def makefig_error_pdf_biparam(analysis):
         )
 
 
-def makefig_sensitivity_ivar_all(
-    analysis, param_values, ivar_names, ivar_values
-):
+def makefig_sensitivity_ivar_all(analysis, param_values, ivar_names, ivar_values):
     param_names = [p.name for p in analysis.parameters]
     # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
@@ -1341,17 +1339,23 @@ def makefig_sensitivity_tsvar_all(
     )
     # Estimate the rank of the sensitivity vectors
     pth_svd_data = analysis.directory / "sensitivity_ρ_stats.json"
-    pth_svd_fig = analysis.directory / "sensitivity_ρ_singular_values.svg"
+    pth_svd_fig_s = analysis.directory / "sensitivity_ρ_singular_values.svg"
+    pth_svd_fig_v = analysis.directory / "sensitivity_ρ_principal_axes.svg"
     try:
-        fig, svd_values = fig_corr_svd(correlations_table)
+        svd_data = corr_svd(correlations_table)
         with open(pth_svd_data, "w") as f:
-            json.dump(svd_values, f)
-        fig.savefig(pth_svd_fig)
+            json.dump(svd_data, f)
+        fig = fig_corr_singular_values(svd_data)
+        fig.savefig(pth_svd_fig_s)
+        fig = fig_corr_eigenvectors(svd_data)
+        fig.savefig(pth_svd_fig_v)
     except np.linalg.LinAlgError as e:
         warn(f"Corroleation matrix SVD failed: {str(e)}")
         # Don't leave files from a previous run (if any); that would confuse the user
+        # TODO: Old files should be cleaned up at the beginning of a run
         pth_svd_data.unlink(missing_ok=True)
-        pth_svd_fig.unlink(missing_ok=True)
+        pth_svd_fig_s.unlink(missing_ok=True)
+        pth_svd_fig_v.unlink(missing_ok=True)
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
@@ -1741,9 +1745,9 @@ def makefig_sensitivity_tsvars_heatmap(
     # Compute unsigned Pearson correlation distance = 1 - | ρ | where
     # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
     # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
-    # undefined.  Typically this will happen when u or v is all zeroes; in this
+    # undefined.  Typically, this will happen when u or v is all zeroes; in this
     # case, the numerator is also zero.  For this application, it is reasonable
-    # to define 0/0 = 0.  Therefore we need to check for (u − u̅) * (v - v̅) = 0
+    # to define 0/0 = 0.  Therefore, we need to check for (u − u̅) * (v - v̅) = 0
     # and set the correlation distance for those vector pairs to 1.
     dist = (1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1)) ** 0.5
     n = len(arr)  # number of variables
@@ -1981,7 +1985,7 @@ def makefig_sensitivity_tsvars_heatmap(
     ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
     ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
     #
-    # Resize figure to accomodate left axis tick labels
+    # Resize figure to accommodate left axis tick labels
     ## Calculate left overflow
     bbox_px = ax.get_tightbbox(fig.canvas.get_renderer())
     bbox_in = fig.dpi_scale_trans.inverted().transform(bbox_px)
@@ -2215,13 +2219,23 @@ def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
         ax.legend()
 
 
-def fig_corr_svd(correlations_table, cutoff=0.01):
+def corr_svd(correlations_table):
+    """Calculate singular values and eigenvectors of parameter sensitivities"""
     correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
     arr = correlations.unstack(["Variable", "Time Point"]).values
-    u, s, vh = np.linalg.svd(arr.T)
-    svd_values = {"singular values": s.tolist()}
+    u, s, vh = np.linalg.svd(arr.T, full_matrices=False)
+    svd_data = {
+        "singular values": s.tolist(),
+        "parameters": correlations.index.levels[0].values.tolist(),
+        "principal axes": [vh[i].tolist() for i in range(len(vh))],
+    }
+    return svd_data
+
+
+def fig_corr_singular_values(svd_data, cutoff=0.01):
+    """Return figure with singular values from SVD of sensitivity vectors"""
+    s = np.array(svd_data["singular values"])
     fig = Figure()
-    # Plot the singular values for the sensitivity vectors
     fig.set_size_inches((4, 3))
     FigureCanvas(fig)
     ax = fig.add_subplot()
@@ -2246,7 +2260,135 @@ def fig_corr_svd(correlations_table, cutoff=0.01):
         labelcolor=COLOR_DEEMPH,
     )
     fig.tight_layout()
-    return fig, svd_values
+    return fig
+
+
+def fig_corr_eigenvectors(svd_data):
+    """Return figure with parameter weights for eigenvectors of sensitivity vectors"""
+    n = len(svd_data["parameters"])
+    # Calculate figure dimensions
+    cell_size = 0.8
+    # pad_all is applied on the left and right figure margins at the very end,
+    # when the figure is being resized to accommodate text
+    pad_all = FONTSIZE_TICKLABEL / 2 / 72
+    pad_b = pad_all * 2
+    central_w = cell_size * n
+    central_h = cell_size * n + pad_all * (n - 1)
+    cbar_lpad = 12 / 72
+    cbar_rpad = (32 + FONTSIZE_AXLABEL) / 72
+    cbar_w = 0.3
+    cbar_h = central_h
+    pos_central_in = np.array((0, pad_b, central_w, central_h))
+    pos_cbar_in = np.array((central_w + cbar_lpad, pad_b, cbar_w, cbar_h))
+    fig_w = central_w + cbar_lpad + cbar_w + cbar_rpad
+    fig_h = (
+        pad_b
+        + FONTSIZE_FIGLABEL / 72
+        + FONTSIZE_AXLABEL / 72
+        + 0.2
+        + central_h
+        + pad_all
+    )
+    # Prepare figure
+    fig = Figure()
+    FigureCanvas(fig)
+    fig.set_size_inches(fig_w, fig_h)
+    axarr = []
+    for i, parameter in enumerate(svd_data["parameters"]):  # loop is bottom to top
+        # Margins will be expanded later to fit axis labels
+        l = pad_all
+        w = central_w
+        b = pad_b + i * (cell_size + pad_all)
+        h = cell_size
+        ax = fig.add_axes((l / fig_w, b / fig_h, w / fig_w, h / fig_h))
+        axarr.append(ax)
+        for spine in ("left", "right", "top", "bottom"):
+            ax.spines[spine].set_visible(False)
+    axarr = axarr[::-1]  # Go top to bottom
+    # Plot parameter weights that comprise each eigenvector
+    cmap = mpl.cm.get_cmap("cividis")
+    cnorm = mpl.colors.Normalize(vmin=-1, vmax=1)
+    im = None
+    for i in range(n):
+        ax = axarr[i]
+        v = svd_data["principal axes"][i]
+        im = ax.matshow(
+            np.atleast_2d(v),
+            cmap=cmap,
+            norm=cnorm,
+            extent=(
+                -0.5,
+                n - 0.5,
+                -0.5,
+                0.5,
+            ),
+        )
+        for j, w in enumerate(v):
+            ax.text(
+                j,
+                0,
+                "{:0.2f}".format(w),
+                ha="center",
+                va="center",
+                backgroundcolor=(1, 1, 1, 0.5),
+                fontsize=FONTSIZE_TICKLABEL,
+            )
+        ax.tick_params(
+            axis="x",
+            color=COLOR_DEEMPH,
+            labelsize=FONTSIZE_TICKLABEL,
+            labelcolor=COLOR_DEEMPH,
+            which="both",
+            bottom=False,
+            top=False,
+        )
+        ax.tick_params(
+            axis="y",
+            color=COLOR_DEEMPH,
+            labelsize=FONTSIZE_TICKLABEL,
+            labelcolor=COLOR_DEEMPH,
+        )
+        ax.set_yticks([0])
+        ax.set_yticklabels([i])
+    # Plot colorbar
+    cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
+    if im is not None:
+        cbar = fig.colorbar(im, cax=cax)
+        cbar.set_label("Parameter weight", fontsize=FONTSIZE_AXLABEL)
+        cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
+    # Add labels
+    axarr[0].set_title(
+        "Sensitivity vectors' principal axes", fontsize=FONTSIZE_FIGLABEL
+    )
+    axarr[0].set_xticks(
+        [i for i in range(n)],
+    )
+    # ^ reversed b/c origin="upper"
+    axarr[0].set_xticklabels(svd_data["parameters"])
+    axarr[0].tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, top=True)
+    # Resize figure to accommodate left axis tick labels
+    ## Calculate left overflow
+    bbox_in = [
+        fig.dpi_scale_trans.inverted().transform(
+            ax.get_tightbbox(fig.canvas.get_renderer())
+        )
+        for ax in axarr + [cax]
+    ]
+    Δleft_in = pad_all + 12 / 72 + max((0, -np.min(bbox_in, axis=0)[0][0]))
+    Δright_in = max((0, np.max(bbox_in, axis=0)[0][1] - fig_w)) + pad_all
+    ## Resize the canvas
+    fig_w = fig_w + Δleft_in + Δright_in
+    fig.set_size_inches(fig_w, fig_h)
+    ## Re-apply the axes sizes, which will have changed because they are stored in
+    ## figure units
+    pos_central_in[0] += Δleft_in
+    pos_cbar_in[0] += Δleft_in
+    for ax in axarr:
+        bb = ax.get_position().bounds
+        bb = (pos_central_in[0] / fig_w, bb[1], central_w / fig_w, bb[3])
+        ax.set_position(bb)
+    cax.set_position(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
+    return fig
 
 
 def fig_tsvar_pdf(
