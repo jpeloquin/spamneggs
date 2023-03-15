@@ -325,11 +325,11 @@ class CaseGenerator:
     ):
         """Return a CaseGenerator object
 
-        :param name: Name of the analysis.  Used as the name of folder containing all
-        generated files.
+        :param name: Name of the case generator.  Used as the name of the directory that
+        will contain all generated files.
 
-        :parentdir: The parent directory in which to create the directory the generated
-        files.  Defaults to the current working directory.
+        :parentdir: The parent directory for the generator directory.  Defaults to the
+        current working directory.
 
         :param checks: Sequence of callables that take a waffleiron Model as their lone
         argument and should raise an exception if the check fails, or return None if the
