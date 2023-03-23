@@ -331,7 +331,7 @@ class CaseGenerator:
         :param name: Name of the case generator.  Used as the name of the directory that
         will contain all generated files.
 
-        :parentdir: The parent directory for the generator directory.  Defaults to the
+        :param parentdir: The parent directory for the generator directory.  Defaults to the
         current working directory.
 
         :param checks: Sequence of callables that take a waffleiron Model as their lone
@@ -705,7 +705,7 @@ def run_sensitivity(
 def generate_cases_serial(
     generator: CaseGenerator, parameter_values: Mapping[str, Mapping[str, Quantity]]
 ):
-    """List an analysis' named cases."""
+    """Generate simulation definition files for named cases"""
     cases = [
         generator.generate_case(name, levels, sub_dir="named_cases")
         for name, levels in parameter_values.items()
