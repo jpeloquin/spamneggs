@@ -36,6 +36,8 @@ from waffleiron.febio import (
     CheckError,
     run_febio_checked,
 )
+from waffleiron.input import read_febio_xml as read_xml, textdata_table
+from waffleiron.select import find_closest_timestep
 
 # Same-package modules
 from . import colors
@@ -43,9 +45,10 @@ from .core import Parameter
 from . import febioxml as fx
 from .febioxml import (
     FunctionVar,
+    TAG_FOR_ENTITY_TYPE,
     TextDataSelector,
+    TimeSeries,
     XpltDataSelector,
-    read_febio_xml as read_xml,
 )
 from .variables import *
 
@@ -778,7 +781,7 @@ def tabulate_case_write(case, dir_out=None):
     if not dir_out.exists():
         dir_out.mkdir()
     # Tabulate the variables
-    record, timeseries = fx.tabulate_case(case)
+    record, timeseries = tabulate_case(case)
     with open(dir_out / f"{case.name}_vars.json", "w") as f:
         write_record_to_json(record, f)
     timeseries.to_csv(dir_out / f"{case.name}_timeseries_vars.csv", index=False)
@@ -2475,3 +2478,129 @@ def fig_tsvar_pdf(
         f"{variable} time series vs. {parameter.name}", fontsize=FONTSIZE_FIGLABEL
     )
     return fig, axs
+
+
+def tabulate_case(case):
+    """Tabulate variables for a single analysis case."""
+    case_tree = read_xml(case.feb_file)
+    # Read the text data files
+    # TODO: Finding the text data XML elements should probably be done in Waffleiron.  Need to move this function to spamneggs.py so we can annotate the type of the arguments.
+    text_data = {}
+    for entity_type in ("node", "element", "body", "connector"):
+        tagname = TAG_FOR_ENTITY_TYPE[entity_type]
+        fname = case.feb_file.with_suffix("").name + f"_-_{tagname}.txt"
+        pth = case.feb_file.parent / fname
+        e_textdata = case_tree.find(f"Output/logfile/{tagname}[@file='{fname}']")
+        if e_textdata is not None:
+            text_data[entity_type] = textdata_table(pth)
+        else:
+            text_data[entity_type] = None
+    # Extract values for each variable based on its <var> element
+    record = {"instantaneous variables": {}, "time series variables": {}}
+    for varname, var in case.variables_list.items():
+        if isinstance(var, XpltDataSelector):
+            xplt_data = case.solution.solution
+            # Check component selector validity
+            dtype = xplt_data.variables[var.variable]["type"]
+            oneids = (str(i + 1) for i in var.component)
+            if dtype == "float" and len(var.component) != 0:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 0 dimensions."
+                raise ValueError(msg)
+            elif dtype == "vec3f" and len(var.component) != 1:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 1 dimension."
+                raise ValueError(msg)
+            elif dtype == "mat3fs" and len(var.component) != 2:
+                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 2 dimensions."
+                raise ValueError(msg)
+            # Get ID for region selector
+            if var.region is None:
+                region_id = None
+            else:
+                region_id = var.region["ID"]
+            # Get ID for parent selector
+            if var.parent_entity is None:
+                parent_id = None
+            else:
+                parent_id = var.parent_entity["ID"]
+            if var.temporality == "instantaneous":
+                # Convert time selector to step selector
+                if var.time_unit == "time":
+                    step = find_closest_timestep(
+                        var.time,
+                        xplt_data.step_times,
+                        np.array(range(len(xplt_data.step_times))),
+                    )
+                value = xplt_data.value(
+                    var.variable, step, var.entity_id, region_id, parent_id
+                )
+                # Apply component selector
+                for c in var.component:
+                    value = value[c]
+                # Save selected value
+                record["instantaneous variables"][varname] = {"value": value}
+            elif var.temporality == "time series":
+                data = xplt_data.values(
+                    var.variable,
+                    entity_id=var.entity_id,
+                    region_id=region_id,
+                    parent_id=parent_id,
+                )
+                values = np.moveaxis(np.array(data[var.variable]), 0, -1)
+                for c in var.component:
+                    values = values[c]
+                record["time series variables"][varname] = {
+                    "times": xplt_data.step_times,
+                    "steps": np.array(range(len(xplt_data.step_times))),
+                    "values": values,
+                }
+        elif isinstance(var, TextDataSelector):
+            # Apply entity type selector
+            tab = text_data[var.entity]
+            # Apply entity ID selector
+            tab = tab[tab["Item"] == var.entity_id]
+            tab = tab.set_index("Step")
+            if var.temporality == "instantaneous":
+                # Convert time selector to step selector.  The selector
+                # has internal validation, so we can assume the time
+                # unit is valid.
+                if var.time_unit == "time":
+                    step = find_closest_timestep(var.time, tab["Time"], tab.index)
+                    if step == 0:
+                        raise ValueError(
+                            "Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0."
+                        )
+                    if step not in tab.index:
+                        raise ValueError(
+                            f"A value for {var.variable} was requested for step = {step}, but this step is not present in the FEBio text data output."
+                        )
+                elif var.time_unit == "step":
+                    step = var.time
+                # Apply variable name and time selector
+                value = tab[var.variable].loc[step]
+                record["instantaneous variables"][varname] = {"value": value}
+            elif var.temporality == "time series":
+                record["time series variables"][varname] = {
+                    "times": tab["Time"].values,
+                    "steps": tab.index.values,
+                    "values": tab[var.variable].values,
+                }
+        elif isinstance(var, FunctionVar):
+            v = var(case)
+            if not isinstance(v, TimeSeries):
+                record["instantaneous variables"][varname] = {"value": v}
+            else:
+                record["time series variables"][varname] = {
+                    "times": v.time,
+                    "steps": v.step,
+                    "values": v.value,
+                }
+        else:
+            raise ValueError(f"{var} not supported as a variable type.")
+    # Assemble the time series table
+    tab_timeseries = {"Time": [], "Step": []}
+    for var, d in record["time series variables"].items():
+        tab_timeseries["Time"] = d["times"]
+        tab_timeseries["Step"] = d["steps"]
+        tab_timeseries[var] = d["values"]
+    tab_timeseries = pd.DataFrame(tab_timeseries)
+    return record, tab_timeseries
