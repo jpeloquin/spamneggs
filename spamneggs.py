@@ -50,6 +50,7 @@ from .febioxml import (
     TimeSeries,
     XpltDataSelector,
 )
+from .plot import FONTSIZE_FIGLABEL, FONTSIZE_AXLABEL, FONTSIZE_TICKLABEL
 from .variables import *
 
 NUM_WORKERS = psutil.cpu_count(logical=False)
@@ -59,9 +60,6 @@ COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as z
 CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
     "div_blue_black_red", colors.diverging_bky_60_10_c30_n256
 )
-FONTSIZE_FIGLABEL = 12
-FONTSIZE_AXLABEL = 10
-FONTSIZE_TICKLABEL = 8
 LABELH_MULT = 1.5  # multiple of font size to use for label height
 COLOR_DEEMPH = "dimgray"
 
