@@ -20,6 +20,11 @@ class StepSweep:
         :param f: Finite difference derivative f(x, h) where x is a parameter vector and
         h is the step size.  The derivative can be of any order.
 
+        :param x: The point at which to evaluate the derivative.
+
+        :param steps: Step sizes.  The derivative will be evaluated once using each
+        provided step size.
+
         """
         self.x = x
         self.h = steps
