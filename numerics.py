@@ -216,7 +216,9 @@ def valid_interval_from_step_sweep(error, tol):
     """
     m = np.abs(error) <= tol
     candidates = np.split(np.arange(len(error)), np.where(m == 0)[0])
-    idx_largest_span = candidates[np.argmax([len(a) for a in candidates])] + 1
+    idx_largest_span = candidates[np.argmax([len(a) for a in candidates])]
+    if not m[idx_largest_span[0]]:
+        idx_largest_span = idx_largest_span[1:]
     if len(idx_largest_span) >= 1:
         return idx_largest_span[0], idx_largest_span[-1]
     else:
