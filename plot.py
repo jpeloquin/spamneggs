@@ -31,8 +31,8 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
             text.set_size(FONTSIZE_TICKLABEL)
     if xlabel is not None:
         for j in range(nw):
-            ax[-1, j].set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
+            axarr[-1, j].set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
     if ylabel is not None:
         for i in range(nh):
-            ax[i, 0].set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
+            axarr[i, 0].set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
     return FigResultAxarr(fig, axarr)

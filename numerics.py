@@ -5,6 +5,7 @@ from typing import Iterable
 from matplotlib.figure import Figure
 import numdifftools as nd
 import numpy as np
+from matplotlib.ticker import LogLocator, ScalarFormatter
 from scipy.signal import savgol_filter
 from scipy.stats import gaussian_kde
 
@@ -33,12 +34,15 @@ class StepSweep:
         # Indices corresponding to the function dimensionality are first.  The index
         # across step sizes is last.
         self.v = np.stack([f(x, h) for h in steps], axis=-1)
-        self.h_opt = np.full(self.v.shape, np.nan)
-        self.v_opt = np.full(self.v.shape, np.nan)
-        self.Δv = np.full(self.v.shape, np.nan)
-        self.h_filtered = np.full(self.v.shape, np.nan)
-        self.v_filtered = np.full(self.v.shape, np.nan)
-        self.Δv_filtered = np.full(self.v.shape, np.nan)
+        self.error = np.full(self.v.shape, np.nan)
+        self.Δv = np.full(self.v.shape[:-1] + (self.v.shape[-1] - 1,), np.nan)
+        self.h_opt = np.full(self.v.shape[:-1], np.nan)
+        self.v_opt = np.full(self.v.shape[:-1], np.nan)
+        # Don't know length of filtered data ahead of time
+        self.h_filtered = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
+        self.v_filtered = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
+        self.Δv_filtered = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
+        self.h_valid = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
         for i in np.ndindex(self.v.shape[:-1]):
             idx_opt, Δv, h_filtered, Δv_filtered = optimum_from_step_sweep(
                 self.h, self.v[i]
@@ -47,56 +51,74 @@ class StepSweep:
             self.h_filtered[i] = h_filtered
             self.Δv_filtered[i] = Δv_filtered
             self.h_opt[i] = steps[idx_opt]
-            self.v_opt[i] = self.v[i, idx_opt]
-            self.error = self.v[i] - self.v_opt[i]
-            valid_interval = valid_interval_from_step_sweep(self.error, self.tol)
+            self.v_opt[i] = self.v[i][idx_opt]
+            self.error[i] = self.v[i] - self.v_opt[i]
+            valid_interval = valid_interval_from_step_sweep(
+                self.error[i], tol(self.v_opt[i])
+            )
             if valid_interval:
-                self.h_valid = (steps[valid_interval[0]], steps[valid_interval[1]])
+                self.h_valid[i] = (steps[valid_interval[0]], steps[valid_interval[1]])
             else:
-                self.h_valid = None
-
-    @property
-    def tol(self):
-        return max((self.rtol * self.v_opt, self.atol))
+                self.h_valid[i] = None
 
 
-def plot_step_sweep_Hessian(sweep: StepSweep):
-    fig_err = fig_template_axarr(xlabel="Step size", ylabel="|Error|")
-    fig_incr = fig_template_axarr(xlabel="Step size", ylabel="|Incremental Δ|")
+def tol(v, rtol=0.005, atol=1e-7):
+    return max((rtol * v, atol))
+
+
+def plot_step_sweep(sweep: StepSweep):
+    n = sweep.v.shape[0]
+    fig_err = fig_template_axarr(n, n, xlabel="Step size", ylabel="|Error|")
+    fig_incr = fig_template_axarr(n, n, xlabel="Step size", ylabel="|Incremental Δ|")
 
     def plot_ax(ax, i, j, h, v, h_opt, h_bounds=None):
         v = np.abs(v)  # log scale cannot cross zero
-        ax.set_title(f"$∂f/∂x_{{{i+1}}}∂x_{{{j + 1}}}$|", fontsize=FONTSIZE_AXLABEL)
+        ax.set_title(f"|$∂f/∂x_{{{i+1}}}∂x_{{{j + 1}}}$|", fontsize=FONTSIZE_AXLABEL)
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.yaxis.get_major_formatter().set_powerlimits((-3, 3))
-        ax.axvline(h_opt[i, j], color="C0", linewidth=2.5)
-        ax.plot_ax(h, v, ".", color="deepskyblue")
+        ax.xaxis.get_minor_locator().set_params(numticks=50)
+        ax.yaxis.get_minor_locator().set_params(numticks=50)
+        ax.axvline(h_opt, color="C0", linewidth=2.5)
+        ax.plot(h, v, ".", color="deepskyblue")
         if h_bounds is not None:
             ax.axvline(
                 h_bounds[0],
                 color="C3",
                 linestyle="dotted",
-                linewidth=1.5,
+                linewidth=2.5,
             )
             ax.axvline(
                 h_bounds[1],
                 color="C1",
                 linestyle="dotted",
-                linewidth=1.5,
+                linewidth=2.5,
             )
 
     for i, j in np.ndindex(sweep.v.shape[:-1]):
         # Incremental change plot
         ax = fig_incr.axarr[i, j]
-        plot_ax(ax, i, j, sweep.h, sweep.Δv, sweep.h_opt, sweep.h_valid)
-        ax.plot_ax(
-            sweep.h_filtered, sweep.Δv_filtered, "-", color="black", linewidth=0.5
+        plot_ax(
+            ax,
+            i,
+            j,
+            sweep.h[:-1],
+            sweep.Δv[i, j],
+            sweep.h_opt[i, j],
+            sweep.h_valid[i, j],
+        )
+        ax.plot(
+            sweep.h_filtered[i, j],
+            sweep.Δv_filtered[i, j],
+            "-",
+            color="black",
+            linewidth=0.5,
         )
 
         # Error plot
         ax = fig_err.axarr[i, j]
-        plot_ax(ax, i, j, sweep.h, sweep.v[i, j], sweep.h_opt, sweep.h_valid)
+        plot_ax(
+            ax, i, j, sweep.h, sweep.error[i, j], sweep.h_opt[i, j], sweep.h_valid[i, j]
+        )
 
     return fig_incr, fig_err
 
@@ -118,12 +140,16 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
     hi = np.logspace(np.log10(h[0]), np.log10(h[-1]), 200)
 
     def add_pdf(bound_data, ax, color, label=None):
-        # Gaussian KDE cannot be constructed if all data values are equal
+        # Gaussian KDE cannot be constructed if all data values are equal.  Even when all data values are nearly equal, the probability density blows up.
         if np.all(bound_data == bound_data[0]):
             ax.axvline(bound_data[0], linewidth=2, color=color, label=label)
+            return
+        b = gaussian_kde(np.log10(bound_data))
+        pdf = b(np.log10(hi))
+        if max(pdf) > 10:
+            ax.axvline(np.mean(bound_data[0]), linewidth=2, color=color, label=label)
         else:
-            b = gaussian_kde(np.log10(bound_data))
-            ax.fill_between(hi, b(np.log10(hi)), color=color, label=label)
+            ax.fill_between(hi, pdf, color=color, label=label, alpha=0.8)
 
     # Plot distribution of bounds of valid step intervals for all components of the
     # Hessian
@@ -133,12 +159,13 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
     )
     ax = fig_combined.add_subplot(111)
     fig_combined.set_size_inches(4, 3)
-    add_pdf(h_bounds[0, :].flatten(), ax, color="C3", label="Lower bound")
-    add_pdf(h_bounds[1, :].flatten(), ax, color="C1", label="Upper bound")
+    add_pdf(np.stack(h_bounds.flatten())[:, 0], ax, color="C3", label="Lower bound")
+    add_pdf(np.stack(h_bounds.flatten())[:, 1], ax, color="C1", label="Upper bound")
     add_pdf(h_opt.flatten(), ax, color="C0", label="Optimum")
     ax.set_xscale("log")
+    ax.set_xlim(h[0], h[-1])
     ax.set_xlabel("Step size")
-    ax.set_ylabel("Probability density [1]")
+    ax.set_ylabel("Probability density")
     ylim = ax.get_ylim()
     ax.set_ylim((0, ylim[1]))
     ax.legend()
@@ -150,17 +177,24 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
     for i in range(ni):  # rows
         for j in range(nj):  # columns
             ax = axarr_components[i, j]
+            ax.set_title(
+                f"$∂f/∂x_{{{i + 1}}}∂x_{{{j + 1}}}$", fontsize=FONTSIZE_AXLABEL
+            )
+            ax.set_xscale("log")
+            ax.set_xlim(h[0], h[-1])
+            ax.xaxis.get_minor_locator().set_params(numticks=50)
             # Bounds of region with acceptable error
-            add_pdf(h_bounds[0, i, j], ax, "C3", label="Lower bound")
-            add_pdf(h_bounds[1, i, j], ax, "C1", label="Upper bound")
+            add_pdf(np.stack(h_bounds[i, j])[:, 0], ax, "C3", label="Lower bound")
+            add_pdf(np.stack(h_bounds[i, j])[:, 1], ax, "C1", label="Upper bound")
             add_pdf(h_opt[i, j], ax, "C0", label="Optimum")
             ylim = ax.get_ylim()
             ax.set_ylim((0, ylim[1]))
             if i == ni - 1:
                 ax.set_xlabel("Step size")
             if j == 0:
-                ax.set_ylabel("PDF [1]")
+                ax.set_ylabel("density")
     fig_components.suptitle("Valid step size interval", fontsize=FONTSIZE_FIGLABEL)
+    fig_components.savefig("test.svg")
     return fig_combined, fig_components
 
 
@@ -172,13 +206,23 @@ def optimum_from_step_sweep(h, v):
     :param v: Function values for each step in steps, dim 1 array.
 
     """
-    Δv = np.abs(np.diff(v, axis=0))
+    Δv = np.abs(np.diff(v[::-1], axis=0))[::-1]
     # To estimate h_opt as the step size at which the incremental change starts
     # increasing (from the right), need to filter out zeroes and other outliers caused
     # by error cancellation.
     m = Δv != 0
-    h_filtered = h[m]
-    Δv_filtered = 10 ** savgol_filter(np.log10(Δv[m]), 5, 2)
+    h_filtered = h[:-1][m]
+    n = np.sum(m)
+    if n < 3:
+        raise ValueError(
+            f"{n} points have non-zero incremental change as step size decreases.  Cannot determine optimal step size with ≤ 2 points."
+        )
+    elif n == 3:
+        Δv_filtered = Δv[m]
+    else:
+        Δv_filtered = 10 ** savgol_filter(
+            np.log10(Δv[m]), window_length=min(n, 5), polyorder=2
+        )
     idx_opt = np.argmin(Δv_filtered)
     return idx_opt, Δv, h_filtered, Δv_filtered
 
@@ -193,7 +237,7 @@ def run_sweeps_Hessian(dir_out, f, samples, steps, rtol=0.005, atol=1e-7):
     sweeps = []
     for i, x in enumerate(samples):
         sweep = StepSweep(eval_hessian, x, steps, rtol, atol)
-        fig_Δ, fig_err = plot_step_sweep_Hessian(sweep)
+        fig_Δ, fig_err = plot_step_sweep(sweep)
         fig_Δ.savefig(dir_Δ / f"{i}_incremental_Δ.svg")
         fig_err.savefig(dir_err / f"{i}_error.svg")
         sweeps.append(sweep)
