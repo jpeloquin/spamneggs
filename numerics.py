@@ -201,9 +201,13 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
 def optimum_from_step_sweep(h, v):
     """Estimate optimal step size by incremental stepwise change
 
-    :param h: Step size values, dim 1 array.
+    :param h: Step size values, dim 1 array, ordered small to large.
 
-    :param v: Function values for each step in steps, dim 1 array.
+    :param v: Function values for each step in steps, dim 1 array.  Ordered to match h.
+
+    :returns:
+
+    idx_opt indexes into the input h and v
 
     """
     Δv = np.abs(np.diff(v[::-1], axis=0))[::-1]
@@ -211,6 +215,7 @@ def optimum_from_step_sweep(h, v):
     # increasing (from the right), need to filter out zeroes and other outliers caused
     # by error cancellation.
     m = Δv != 0
+    idx_filtered = np.arange(len(Δv))[m]
     h_filtered = h[:-1][m]
     n = np.sum(m)
     if n < 3:
@@ -223,7 +228,7 @@ def optimum_from_step_sweep(h, v):
         Δv_filtered = 10 ** savgol_filter(
             np.log10(Δv[m]), window_length=min(n, 5), polyorder=2
         )
-    idx_opt = np.argmin(Δv_filtered)
+    idx_opt = idx_filtered[np.argmin(Δv_filtered)]
     return idx_opt, Δv, h_filtered, Δv_filtered
 
 
