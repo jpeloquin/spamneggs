@@ -12,6 +12,12 @@ from scipy.stats import gaussian_kde
 from .plot import FONTSIZE_AXLABEL, FONTSIZE_FIGLABEL, fig_template_axarr
 
 
+class OptimumStepError(ValueError):
+    """Raise when the optimum step size cannot be identified"""
+
+    pass
+
+
 class StepSweep:
     """Step sweep with optimum step size identified as minimum Δ"""
 
@@ -43,6 +49,7 @@ class StepSweep:
         self.v_filtered = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
         self.Δv_filtered = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
         self.h_valid = np.full(self.Δv.shape[:-1], np.nan, dtype=object)
+        # Identify optimum step size and valid bounds
         for i in np.ndindex(self.v.shape[:-1]):
             idx_opt, Δv, h_filtered, Δv_filtered = optimum_from_step_sweep(
                 self.h, self.v[i]
@@ -210,6 +217,8 @@ def optimum_from_step_sweep(h, v):
     idx_opt indexes into the input h and v
 
     """
+    # TODO: Filtering out Δv = 0 is a lousy approach because it breaks simple tests.  I
+    # don't like the control flow between this code and plotting of the results.
     Δv = np.abs(np.diff(v[::-1], axis=0))[::-1]
     # To estimate h_opt as the step size at which the incremental change starts
     # increasing (from the right), need to filter out zeroes and other outliers caused
@@ -219,7 +228,7 @@ def optimum_from_step_sweep(h, v):
     h_filtered = h[:-1][m]
     n = np.sum(m)
     if n < 3:
-        raise ValueError(
+        raise OptimumStepError(
             f"{n} points have non-zero incremental change as step size decreases.  Cannot determine optimal step size with ≤ 2 points."
         )
     elif n == 3:
