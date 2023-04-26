@@ -1343,6 +1343,8 @@ def makefig_sensitivity_tsvar_all(
     pth_svd_fig_s = analysis.directory / "sensitivity_ρ_singular_values.svg"
     pth_svd_fig_v = analysis.directory / "sensitivity_ρ_principal_axes.svg"
     try:
+        # TODO: get the parameter order from the cluster analysis so it can be
+        #  re-used for the sensitivity vectors PCA plot
         svd_data = corr_svd(correlations_table)
         with open(pth_svd_data, "w") as f:
             json.dump(svd_data, f)
