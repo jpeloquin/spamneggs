@@ -160,6 +160,8 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
 
     # Plot distribution of bounds of valid step intervals for all components of the
     # Hessian
+    # TODO: Solving a constrained layout with tens to hundreds of subplots is slow.
+    # Takes about a minute per plot.
     fig_combined = Figure(constrained_layout=True)
     fig_combined.set_constrained_layout_pads(
         wspace=2 / 72, hspace=2 / 72, w_pad=2 / 72, h_pad=2 / 72
