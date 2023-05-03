@@ -622,7 +622,7 @@ def run_sensitivity(
     _validate_opt_on_case_error(on_case_error)
     # Set waffleiron to run FEBio with only 1 thread, since we'll be running one
     # FEBio process per core
-    wfl.febio.FEBIO_THREADS = 1
+    wfl.febio.FEBIO_THREADS_DEFAULT = 1
 
     def replace_status(table, output, step=None):
         if step is not None:
