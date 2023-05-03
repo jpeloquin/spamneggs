@@ -1,7 +1,8 @@
+import matplotlib as mpl
 import numpy as np
 
 from .core import ordered_eig
-from .plot import FONTSIZE_FIGLABEL, plot_eigenvalues_histogram, plot_matrix, symlog
+from .plot import FONTSIZE_FIGLABEL, plot_eigenvalues_histogram, plot_matrix
 
 
 def plot_sample(analysis, id_, Hs, H):
@@ -9,7 +10,7 @@ def plot_sample(analysis, id_, Hs, H):
     dir_Hs = analysis.directory / "samples_plots_scaled_Hessian"
     dir_Hs.mkdir(exist_ok=True)
     fig = plot_matrix(
-        symlog(Hs),
+        Hs, scale="log",
         title=f"Scaled Hessian at sample {id_}",
         cbar_label="Symmetric log10",
         tick_labels=[p.name for p in analysis.parameters],
@@ -19,9 +20,8 @@ def plot_sample(analysis, id_, Hs, H):
     dir_H = analysis.directory / "samples_plots_Hessian"
     dir_H.mkdir(exist_ok=True)
     fig = plot_matrix(
-        symlog(H),
+        H, scale="log",
         title=f"Hessian at sample {id_}",
-        cbar_label="Symmetric log10",
         tick_labels=[p.name for p in analysis.parameters],
     )
     fig.fig.savefig(dir_H / f"{id_}_Hessian.svg")

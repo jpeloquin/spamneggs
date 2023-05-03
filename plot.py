@@ -18,15 +18,6 @@ FigResult = namedtuple("FigResultAxarr", ["fig", "ax"])
 FigResultAxarr = namedtuple("FigResultAxarr", ["fig", "axarr"])
 
 
-def symlog(arr):
-    """Return signed log10 transform of all nonzero values in array"""
-    arr = np.array(arr)
-    transformed = np.zeros(arr.shape)
-    m_nonzero = arr != 0
-    transformed[m_nonzero] = np.sign(arr[m_nonzero]) * np.log10(np.abs(arr[m_nonzero]))
-    return transformed
-
-
 def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     fig = Figure(constrained_layout=True)
     fig.set_constrained_layout_pads(
@@ -122,7 +113,7 @@ def plot_eigenvalues_pdfs(eigenvalues):
     smallest = np.min(np.abs(eigenvalues))
     for i, x in enumerate(eigenvalues[:]):
         ax = f.axarr[i, 0]
-        ax.get_shared_x_axes().join(f.axarr[0,0], ax)
+        ax.get_shared_x_axes().join(f.axarr[0, 0], ax)
         ax.set_xlabel(f"Eigenvalue {i + 1}", fontsize=FONTSIZE_AXLABEL)
         ax.set_xscale("symlog", linthresh=smallest)
         ax.vlines(x, ymin=-1, ymax=1, color="black")
@@ -135,7 +126,9 @@ def plot_eigenvalues_pdfs(eigenvalues):
     return f
 
 
-def plot_matrix(mat, tick_labels=None, cbar_label=None, title=None, format_str=".2g"):
+def plot_matrix(
+    mat, scale="linear", tick_labels=None, cbar_label=None, title=None, format_str=".2g"
+):
     """Plot a square matrix as a heatmap with values written to each cell"""
     nv = mat.shape[0]
     fig = Figure()
@@ -160,11 +153,19 @@ def plot_matrix(mat, tick_labels=None, cbar_label=None, title=None, format_str="
     ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cmap = mpl.cm.get_cmap("cividis")
     vextreme = np.max(np.abs(mat))
-    cnorm = mpl.colors.Normalize(vmin=-vextreme, vmax=vextreme)
+    if scale == "linear":
+        norm = mpl.colors.Normalize(vmin=-vextreme, vmax=vextreme)
+    elif scale == "log":
+        if np.min(mat) <= 0:
+            norm = mpl.colors.SymLogNorm(linthresh=np.min(np.abs(mat)), linscale=0.5)
+        else:
+            norm = mpl.colors.LogNorm(vmin=-vextreme, vmax=vextreme)
+    else:
+        raise ValueError("Scale choice '{scale}' not recognized.")
     im = ax.matshow(
         mat,
         cmap=cmap,
-        norm=cnorm,
+        norm=norm,
         origin="upper",
         extent=(
             -0.5,
