@@ -5,8 +5,10 @@ building blocks to support working with models, see core.py.
 """
 import threading
 
+
 class Counter:
     """Threadsafe counter"""
+
     def __init__(self):
         self.count = 0
         self.lock = threading.Lock()

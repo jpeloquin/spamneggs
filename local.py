@@ -1,21 +1,34 @@
-from .plot import plot_matrix, symlog
+import numpy as np
+
+from .core import ordered_eig
+from .plot import FONTSIZE_FIGLABEL, plot_eigenvalues_histogram, plot_matrix, symlog
+
 
 def plot_sample(analysis, id_, Hs, H):
-    dir_Hessian = analysis.directory / "samples_plots_Hessian"
-    dir_Hessian.mkdir(exist_ok=True)
-    dir_sHessian = analysis.directory / "samples_plots_scaled_Hessian"
-    dir_sHessian.mkdir(exist_ok=True)
+    # Plot the scaled Hessian matrix
+    dir_Hs = analysis.directory / "samples_plots_scaled_Hessian"
+    dir_Hs.mkdir(exist_ok=True)
     fig = plot_matrix(
         symlog(Hs),
         title=f"Scaled Hessian at sample {id_}",
         cbar_label="Symmetric log10",
         tick_labels=[p.name for p in analysis.parameters],
     )
-    fig.fig.savefig(dir_sHessian / f"{id_}_scaled_Hessian.svg")
+    fig.fig.savefig(dir_Hs / f"{id_}_scaled_Hessian.svg")
+    # Plot the Hessian matrix
+    dir_H = analysis.directory / "samples_plots_Hessian"
+    dir_H.mkdir(exist_ok=True)
     fig = plot_matrix(
         symlog(H),
         title=f"Hessian at sample {id_}",
         cbar_label="Symmetric log10",
         tick_labels=[p.name for p in analysis.parameters],
     )
-    fig.fig.savefig(dir_Hessian / f"{id_}_Hessian.svg")
+    fig.fig.savefig(dir_H / f"{id_}_Hessian.svg")
+    # Plot the eigenvalues of the scaled Hessian matrix
+    w, v = ordered_eig(Hs)
+    dir_H_eig = analysis.directory / "samples_plots_scaled_Hessian_eigenvalues"
+    dir_H_eig.mkdir(exist_ok=True)
+    fig = plot_eigenvalues_histogram(w, "Eigenvector Index", "Eigenvalue")
+    fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
+    fig.fig.savefig(dir_H_eig / f"{id_}_scaled_Hessian_eigenvalues.svg")

@@ -5,12 +5,16 @@ import numpy as np
 import matplotlib as mpl
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Patch
+from scipy.stats import gaussian_kde
 
+COLOR_DEEMPH = "dimgray"
 FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
 
 
+FigResult = namedtuple("FigResultAxarr", ["fig", "ax"])
 FigResultAxarr = namedtuple("FigResultAxarr", ["fig", "axarr"])
 
 
@@ -46,6 +50,89 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
         for i in range(nh):
             axarr[i, 0].set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
     return FigResultAxarr(fig, axarr)
+
+
+def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, cutoff=None):
+    """Return bar plot of eigenvalues / singular values"""
+    fig = Figure(constrained_layout=True)
+    fig.set_size_inches((4, 3))
+    ax = fig.add_subplot()
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(color=COLOR_DEEMPH, linewidth=0.5, linestyle="dotted")
+    x = 1 + np.arange(len(values))
+    if cutoff is not None:
+        ax.axhline(cutoff, color=COLOR_DEEMPH, lw=1)
+    ax.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
+    bar_colors = np.full(len(values), "C0")
+    if log:
+        ax.set_yscale("log")
+        sign = np.sign(values)
+        values = np.abs(values)
+        ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=12))
+        ax.yaxis.set_minor_locator(mpl.ticker.LogLocator(numticks=999, subs="auto"))
+        ax.yaxis.set_minor_formatter(mpl.ticker.NullFormatter())
+        ax.set_ylim(
+            (
+                10 ** np.floor(np.log10(np.min(values))),
+                10 ** np.ceil(np.log10(np.max(values))),
+            )
+        )
+        bar_colors[sign < 0] = "C3"
+        ax.legend(
+            handles=[
+                Patch(facecolor="C0", label="Positive"),
+                Patch(facecolor="C3", label="Negative"),
+            ],
+            loc="upper right",
+        )
+    ax.bar(x, values, color=bar_colors)
+    for k in ax.spines:
+        ax.spines[k].set_visible(False)
+    ax.tick_params(
+        axis="x",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    ax.tick_params(
+        axis="y",
+        color=COLOR_DEEMPH,
+        labelsize=FONTSIZE_TICKLABEL,
+        labelcolor=COLOR_DEEMPH,
+    )
+    return FigResult(fig, ax)
+
+
+def plot_eigenvalues_pdfs(eigenvalues):
+    """Return figure with probability distributions of eigenvalues
+
+    :param eigenvalues: Matrix of eigenvalues with shape (# of eigenvalues,
+    # of samples).
+
+    :param xlabel: x-axis label for plot
+
+    :param ylabel: y-axis label for plot
+    """
+    nv, ns = eigenvalues.shape
+    f = fig_template_axarr(nv, 1)
+    sz_in = f.fig.get_size_inches()
+    f.fig.set_size_inches((2.5 * sz_in[0], sz_in[1]))
+    smallest = np.min(np.abs(eigenvalues))
+    for i, x in enumerate(eigenvalues[:]):
+        ax = f.axarr[i, 0]
+        ax.get_shared_x_axes().join(f.axarr[0,0], ax)
+        ax.set_xlabel(f"Eigenvalue {i + 1}", fontsize=FONTSIZE_AXLABEL)
+        ax.set_xscale("symlog", linthresh=smallest)
+        ax.vlines(x, ymin=-1, ymax=1, color="black")
+        ax.set_ylim((-1, 1))
+        ax.yaxis.set_major_locator(mpl.ticker.NullLocator())
+        for k in ax.spines:
+            ax.spines[k].set_visible(False)
+        # TODO: Can I get a Gaussian KDE plot in here?  The symlog axis makes it
+        #  challenging.
+    return f
 
 
 def plot_matrix(mat, tick_labels=None, cbar_label=None, title=None, format_str=".2g"):

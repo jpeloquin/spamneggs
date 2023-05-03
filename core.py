@@ -1,8 +1,8 @@
 """Basic building blocks for modeling functionality"""
+import numpy as np
 import pint
 
 ureg = pint.get_application_registry()
-
 
 
 class Parameter:
@@ -29,3 +29,11 @@ class Parameter:
 
     def __str__(self):
         return f"{self.name} [{self.units}]"
+
+
+def ordered_eig(A):
+    """Return ordered eigenvalues of a matrix"""
+    w, v = np.linalg.eig(A)
+    idx = np.arange(len(w))
+    ordered_idx = sorted(idx, key=lambda i: w[i])[::-1]
+    return w[ordered_idx], v[:, ordered_idx]
