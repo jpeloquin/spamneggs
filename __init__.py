@@ -1,2 +1,2 @@
 from .spamneggs import *
-from . import febioxml
+from . import febioxml, local

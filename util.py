@@ -17,3 +17,10 @@ class Counter:
     def increment(self):
         with self.lock:
             self.count += 1
+
+
+def parameter_to_str(parameter):
+    if parameter.units == "1":
+        return f"{parameter.name} [1]"
+    else:
+        return f"{parameter.name} [{parameter.units:~P}]"
