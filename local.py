@@ -1,8 +1,18 @@
 import matplotlib as mpl
 import numpy as np
+from matplotlib.figure import Figure
 
 from .core import ordered_eig
-from .plot import FONTSIZE_FIGLABEL, plot_eigenvalues_histogram, plot_matrix
+from .plot import (
+    CMAP_DIVERGE,
+    FONTSIZE_AXLABEL,
+    FONTSIZE_FIGLABEL,
+    FONTSIZE_TICKLABEL,
+    FigAxCbar,
+    FigResult,
+    plot_eigenvalues_histogram,
+    plot_matrix,
+)
 
 
 def plot_sample(analysis, id_label, Hs, H):
@@ -10,7 +20,8 @@ def plot_sample(analysis, id_label, Hs, H):
     dir_Hs = analysis.directory / "samples_plots_scaled_Hessian"
     dir_Hs.mkdir(exist_ok=True)
     fig = plot_matrix(
-        Hs, scale="log",
+        Hs,
+        scale="log",
         title=f"Scaled Hessian at sample {id_label}",
         cbar_label="Symmetric log10",
         tick_labels=[p.name for p in analysis.parameters],
@@ -20,7 +31,8 @@ def plot_sample(analysis, id_label, Hs, H):
     dir_H = analysis.directory / "samples_plots_Hessian"
     dir_H.mkdir(exist_ok=True)
     fig = plot_matrix(
-        H, scale="log",
+        H,
+        scale="log",
         title=f"Hessian at sample {id_label}",
         tick_labels=[p.name for p in analysis.parameters],
     )

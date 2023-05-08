@@ -6,16 +6,63 @@ import matplotlib as mpl
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch
-from scipy.stats import gaussian_kde
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from .colors import diverging_bky_60_10_c30_n256
+from .core import Parameter, ureg
+
+CMAP_DIVERGE = mpl.colors.LinearSegmentedColormap(
+    "div_blue_black_red", diverging_bky_60_10_c30_n256
+)
 COLOR_DEEMPH = "dimgray"
 FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
+WS_PAD_ALL = 2 / 72
 
+mpl.rcParams["savefig.dpi"] = 300  # we use imshow
 
 FigResult = namedtuple("FigResultAxarr", ["fig", "ax"])
+FigAxCbar = namedtuple("FigResultAxarr", ["fig", "ax", "cbar"])
 FigResultAxarr = namedtuple("FigResultAxarr", ["fig", "axarr"])
+
+
+def format_number(v, digits=2):
+    """Return formatted number
+
+    Works like "g" format code except only -2 ≤ exponent ≤ 3 are formatted as a
+    decimal value.
+    """
+    m = np.log10(v)
+    if (-2 <= m) and (m <= 3):
+        return format(v, f".{digits}g")
+    else:
+        return format(v, f".{digits}e")
+
+
+def format_parameter_values(definitions, values, digits=2):
+    """Return list of pretty-printed parameter values"""
+    out = []
+    for p, v in zip(definitions, values):
+        v = format_number(v, digits)
+        if isinstance(p, Parameter):
+            nm = p.name
+            units = p.units
+        else:
+            nm, units = p
+            units = ureg(units).u
+        if isinstance(units, str):
+            units = ureg(units).u
+        if units is None or units == "1":
+            out.append(f"{nm} = {v}")
+        else:
+            out.append(f"{nm} = {v} {units:~P}")
+    return out
+
+
+def remove_spines(ax):
+    for k in ax.spines:
+        ax.spines[k].set_visible(False)
 
 
 def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
@@ -138,18 +185,19 @@ def plot_matrix(
         tick_labels = 1 + np.arange(nv)
     # Set size to match number of variables
     in_per_var = 0.8
-    pad_all = 2 / 72
     mat_w = in_per_var * nv
     mat_h = mat_w
     cbar_lpad = 12 / 72
     cbar_w = 0.3
     cbar_h = mat_h
     cbar_rpad = (24 + FONTSIZE_AXLABEL) / 72
-    fig_w = pad_all + mat_w + cbar_lpad + cbar_w + cbar_rpad + pad_all
-    fig_h = pad_all + FONTSIZE_FIGLABEL / 72 + FONTSIZE_AXLABEL / 72 + mat_h + pad_all
+    fig_w = WS_PAD_ALL + mat_w + cbar_lpad + cbar_w + cbar_rpad + WS_PAD_ALL
+    fig_h = (
+        WS_PAD_ALL + FONTSIZE_FIGLABEL / 72 + FONTSIZE_AXLABEL / 72 + mat_h + WS_PAD_ALL
+    )
     fig.set_size_inches(fig_w, fig_h)
     # Plot the matrix itself
-    pos_main_in = np.array((pad_all, pad_all, mat_w, mat_h))
+    pos_main_in = np.array((WS_PAD_ALL, WS_PAD_ALL, mat_w, mat_h))
     ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cmap = mpl.cm.get_cmap("cividis")
     vextreme = np.max(np.abs(mat))
@@ -187,8 +235,8 @@ def plot_matrix(
         )
     pos_cbar_in = np.array(
         (
-            pad_all + mat_w + cbar_lpad,
-            pad_all,
+            WS_PAD_ALL + mat_w + cbar_lpad,
+            WS_PAD_ALL,
             cbar_w,
             cbar_h,
         )
@@ -220,7 +268,7 @@ def plot_matrix(
     bbox_in = fig.dpi_scale_trans.inverted().transform(bbox_px)
     Δright = bbox_in[1, 0] - fig_w
     ## Resize the canvas
-    fig_w = pad_all + Δleft + fig_w + Δright + pad_all
+    fig_w = WS_PAD_ALL + Δleft + fig_w + Δright + WS_PAD_ALL
     fig.set_size_inches(fig_w, fig_h)
     ## Re-apply the axes sizes, which will have changed because they are stored in
     ## figure units
@@ -229,3 +277,191 @@ def plot_matrix(
     ax.set_position(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cax.set_position(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
     return FigResultAxarr(fig, (ax, cax))
+
+
+def plot_neighborhood(
+    f,
+    θ,
+    vectors,
+    n,
+    relative_extent=((-1, 1), (-1, 1)),
+    limits=None,
+    θ_label=None,
+):
+    """Return plot of cost function in a 2D plane
+
+    :param f: The function to plot.  Must accept a vector of parameter values of the same shape as `θ` and return a scalar.
+
+    :param θ: Parameter values about which to plot the function `f`.
+
+    :param vectors: List of two vectors [v1, v2] in parameter space.  v1 defines the
+    plot's x-axis.  v2 defines the plot's y-axis.  The product of the vector and the
+    `relative_extent` values define the extent of the plot.
+
+    :param n: [n1, n2] or [(n1_left, n1_right), (n2_left, n2_right)].  Each value
+    defines the number of points to evaluate along the corresponding axis direction
+    defined by `vectors`.  If [n1, n2] is given each value will be used twice.
+
+    :param relative_extent: [(v1_left, v1_right), (v2_left, v2_right)].  The left and
+    right extents of the plot along v1 and v2, starting at θ.
+
+    :param limits: Array-like of (min, max) limits for each parameter.  Points
+    outside these limits will remain blank on the plot.
+
+    :param θ_label: List of labels for each component of the vectors.
+
+    :retuns: FigAxCbar named tuple.
+
+    In intended use, the vectors are unit vectors in scaled parameter space and the
+    relative_extent values are distances in the same scaled parameter space.
+
+    """
+    # The eigenvector legends are prevented from overlapping the central x and y axis
+    # labels only by some guesstimated padding.  constrained_layout still allowed
+    # overlap.  Also, the width of the colorbar cannot be precisely controlled.  So
+    # layout of this figure could be improved.
+
+    # Expand/fixup parameters
+    θ = np.array(θ)
+    if all([not hasattr(a, "__len__") for a in n]):
+        n = [(a, a) for a in n]
+    if limits is None:
+        limits = np.stack([np.full(len(θ), -np.inf), np.full(len(θ), np.inf)], axis=-1)
+    else:
+        limits = np.array(limits)
+    # Create grid for calculation
+    si = [None, None]  # preallocation
+    for i, v in enumerate(vectors):
+        si[i] = np.hstack(
+            [
+                np.linspace(relative_extent[i][0], 0, n[i][0] + 1),
+                np.linspace(0, relative_extent[i][1], n[i][1] + 1)[1:],
+            ]
+        )
+    neighborhood = np.full((len(si[0]), len(si[1])), np.nan)
+    for i, sx in enumerate(si[0]):
+        for j, sy in enumerate(si[1]):
+            θ_pt = θ + sx * vectors[0] + sy * vectors[1]
+            if any(θ_pt < limits[:, 0]):
+                continue
+            if any(θ_pt > limits[:, 1]):
+                continue
+            neighborhood[i, j] = f(θ_pt)
+            # neighborhood[i, j] = sx
+    # Calculate figure size.  Similar to plot_matrix where possible.
+    fig = Figure(constrained_layout=True)
+    mat_w = 4
+    mat_h = 4
+    cbar_lpad = 12 / 72
+    cbar_w = 0.2
+    vbar_w = 1.0  # width of eigenvector legend bar
+    cbar_rpad = (24 + FONTSIZE_AXLABEL) / 72
+    fig_w = (
+        WS_PAD_ALL
+        + 0.2
+        + vbar_w
+        + WS_PAD_ALL
+        + (FONTSIZE_AXLABEL / 72)
+        + 0.35
+        + mat_w
+        + cbar_lpad
+        + cbar_w
+        + cbar_rpad
+        + WS_PAD_ALL
+    )
+    fig_h = (
+        WS_PAD_ALL
+        + mat_h
+        + FONTSIZE_FIGLABEL / 72
+        + FONTSIZE_AXLABEL / 72
+        + vbar_w
+        + 0.2
+        + WS_PAD_ALL
+    )
+    fig.set_size_inches(fig_w, fig_h)
+    ax = fig.add_subplot()
+    remove_spines(ax)
+    ax.set_xlabel("Vector 1", fontsize=FONTSIZE_AXLABEL)
+    ax.set_xlabel("Vector 2", fontsize=FONTSIZE_AXLABEL)
+    ax.set_aspect("equal")
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
+    im = ax.imshow(
+        neighborhood.T,  # imshow swaps axes
+        cmap="Greys",
+        extent=[si[0][0], si[0][-1], si[1][0], si[1][-1]],
+        origin="lower",
+    )
+    div = make_axes_locatable(ax)
+    ax_cbar = div.append_axes("right", size=cbar_w, pad=cbar_lpad)
+    ax_cbar.tick_params("y", labelsize=FONTSIZE_TICKLABEL)
+    cbar = fig.colorbar(im, cax=ax_cbar)
+    ax_vec1 = div.append_axes(
+        "bottom",
+        vbar_w,
+        pad=(FONTSIZE_TICKLABEL + FONTSIZE_AXLABEL) / 72,
+    )
+    ax_vec2 = div.append_axes(
+        "left",
+        vbar_w,
+        pad=0.35 + (FONTSIZE_TICKLABEL + FONTSIZE_AXLABEL) / 72,
+    )
+    cmap_vec = CMAP_DIVERGE
+    norm_vec = mpl.colors.Normalize(vmin=-1, vmax=1)
+    # Vector 1 legend
+    ax_vec1.matshow(
+        np.atleast_2d(vectors[0]),
+        cmap=cmap_vec,
+        norm=norm_vec,
+        origin="lower",
+        extent=(-0.5, len(θ) - 0.5, 0, 1),
+    )
+    remove_spines(ax_vec1)
+    ax_vec1.tick_params("x", top=False, labeltop=False, labelbottom=True)
+    ax_vec1.tick_params("y", left=False, labelleft=False)
+    if θ_label is not None:
+        ax_vec1.xaxis.set_major_locator(mpl.ticker.FixedLocator(np.arange(len(θ))))
+        ax_vec1.set_xticklabels(θ_label, fontsize=FONTSIZE_TICKLABEL - 1, rotation=90)
+    else:
+        ax_vec1.tick_params("x", bottom=False, labelbottom=False)
+    # Write the value of each component of vector 1 as text
+    for i in range(len(θ)):
+        ax_vec1.text(
+            i,
+            0.5,
+            format(vectors[0][i], ".2f"),
+            ha="center",
+            va="center",
+            backgroundcolor=(1, 1, 1, 0.3),
+            fontsize=FONTSIZE_TICKLABEL - 2,
+        )
+    # Vector 2 legend
+    ax_vec2.matshow(
+        np.atleast_2d(vectors[1]).T,
+        cmap=cmap_vec,
+        norm=norm_vec,
+        extent=(0, 1, len(θ) - 0.5, -0.5),  # l r b t
+        origin="upper",
+    )
+    remove_spines(ax_vec2)
+    ax_vec2.tick_params(
+        "x", top=False, labeltop=False, bottom=False, labelsize=FONTSIZE_TICKLABEL
+    )
+    ax_vec2.tick_params("y", left=True, labelleft=True, labelsize=FONTSIZE_TICKLABEL)
+    if θ_label is not None:
+        ax_vec2.yaxis.set_major_locator(mpl.ticker.FixedLocator(np.arange(len(θ))))
+        ax_vec2.set_yticklabels(θ_label, fontsize=FONTSIZE_TICKLABEL - 1)
+    else:
+        ax_vec2.tick_params("x", bottom=False, labelbottom=False)
+    # Write the value of each component of vector 1 as text
+    for i in range(len(θ)):
+        ax_vec2.text(
+            0.5,
+            i,
+            format(vectors[1][i], ".2f"),
+            ha="center",
+            va="center",
+            backgroundcolor=(1, 1, 1, 0.3),
+            fontsize=FONTSIZE_TICKLABEL - 2,
+        )
+    return FigAxCbar(fig, ax, cbar)
