@@ -287,6 +287,8 @@ def plot_neighborhood(
     relative_extent=((-1, 1), (-1, 1)),
     limits=None,
     θ_label=None,
+    xlabel="Vector 1",
+    ylabel="Vector 2",
 ):
     """Return plot of cost function in a 2D plane
 
@@ -316,10 +318,14 @@ def plot_neighborhood(
     relative_extent values are distances in the same scaled parameter space.
 
     """
-    # The eigenvector legends are prevented from overlapping the central x and y axis
-    # labels only by some guesstimated padding.  constrained_layout still allowed
-    # overlap.  Also, the width of the colorbar cannot be precisely controlled.  So
-    # layout of this figure could be improved.
+    # The figure layout could be improved somewhat: (1) The eigenvector legends are
+    # prevented from overlapping the central x and y axis labels only by some
+    # guesstimated padding.  Constrained layout allowed overlap, I think because the
+    # padding is forced by append_axes.  (2) The width of the colorbar cannot be
+    # precisely controlled.
+
+    # TODO: This figure is complicated enough to be a class.  Add appropriate functions
+    # to set the label.ax.set_aspect("equal")
 
     # Expand/fixup parameters
     θ = np.array(θ)
@@ -338,6 +344,7 @@ def plot_neighborhood(
                 np.linspace(0, relative_extent[i][1], n[i][1] + 1)[1:],
             ]
         )
+    # Calculate values
     neighborhood = np.full((len(si[0]), len(si[1])), np.nan)
     for i, sx in enumerate(si[0]):
         for j, sy in enumerate(si[1]):
@@ -347,68 +354,100 @@ def plot_neighborhood(
             if any(θ_pt > limits[:, 1]):
                 continue
             neighborhood[i, j] = f(θ_pt)
-            # neighborhood[i, j] = sx
-    # Calculate figure size.  Similar to plot_matrix where possible.
+    # Calculate figure size.  Similar to plot_matrix where possible.  From here on,
+    # everything is plot formatting.
     fig = Figure(constrained_layout=True)
     mat_w = 4
-    mat_h = 4
+    mat_h = mat_w * (relative_extent[1][1] - relative_extent[1][0]) / (relative_extent[0][1] - relative_extent[0][0])
     cbar_lpad = 12 / 72
     cbar_w = 0.2
-    vbar_w = 1.0  # width of eigenvector legend bar
+    lplot_w = 0.5  # width of marginal line plot, apparently relative to main axes
+    vbar_w = 1.0  # width of eigenvector legend bar, apparently relative to main axes
     cbar_rpad = (24 + FONTSIZE_AXLABEL) / 72
     fig_w = (
         WS_PAD_ALL
-        + 0.2
-        + vbar_w
-        + WS_PAD_ALL
-        + (FONTSIZE_AXLABEL / 72)
         + 0.35
+        + vbar_w * mat_w
+        + FONTSIZE_AXLABEL / 72
+        + FONTSIZE_TICKLABEL / 72
+        + vbar_w * mat_w / 2
+        + FONTSIZE_AXLABEL / 72
         + mat_w
         + cbar_lpad
-        + cbar_w
+        + lplot_w * mat_w / 2
         + cbar_rpad
         + WS_PAD_ALL
     )
     fig_h = (
         WS_PAD_ALL
         + mat_h
+        + FONTSIZE_AXLABEL / 72
+        + lplot_w * mat_w / 2
         + FONTSIZE_FIGLABEL / 72
         + FONTSIZE_AXLABEL / 72
-        + vbar_w
-        + 0.2
+        + vbar_w * mat_w / 2
+        + 0.35
         + WS_PAD_ALL
     )
     fig.set_size_inches(fig_w, fig_h)
+    # Plot the main heatmap showing the local neighborhood
     ax = fig.add_subplot()
-    remove_spines(ax)
-    ax.set_xlabel("Vector 1", fontsize=FONTSIZE_AXLABEL)
-    ax.set_xlabel("Vector 2", fontsize=FONTSIZE_AXLABEL)
-    ax.set_aspect("equal")
-    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
-    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
     im = ax.imshow(
         neighborhood.T,  # imshow swaps axes
         cmap="magma",
         extent=[si[0][0], si[0][-1], si[1][0], si[1][-1]],
         origin="lower",
     )
+    remove_spines(ax)
+    ax.tick_params(axis="x", labelbottom=False)
+    ax.tick_params(axis="y", labelleft=False)
+    ax.axvline(linestyle="--", linewidth=0.5, color="k")
+    ax.axhline(linestyle="--", linewidth=0.5, color="k")
     div = make_axes_locatable(ax)
+    # Add the colorbar
     ax_cbar = div.append_axes("right", size=cbar_w, pad=cbar_lpad)
     ax_cbar.tick_params("y", labelsize=FONTSIZE_TICKLABEL)
     cbar = fig.colorbar(im, cax=ax_cbar)
+
+    def style_lineplot_axes(ax):
+        for k in ['top','bottom','left','right']:
+            ax.spines[k].set_linewidth(0.5)
+            ax.spines[k].set_color(COLOR_DEEMPH)
+        ax.tick_params("x", labelsize=FONTSIZE_TICKLABEL)
+        ax.tick_params("y", labelsize=FONTSIZE_TICKLABEL)
+
+    # Add a line plot along vector 1, crossing the origin
+    ax_l1 = div.append_axes(
+        "bottom",
+        size=vbar_w,
+        pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL,
+        sharex=ax)
+    style_lineplot_axes(ax_l1)
+    ax_l1.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
+    ax_l1.plot(si[0], neighborhood[:, n[0][0]], color="C0", linewidth=1)
+    ax_l1.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
+    ax_l1.tick_params("x", top=True, bottom=True)
+    ax_l1.tick_params("y")
+    # Add a line plot along vector 2, crossing the origin
+    ax_l2 = div.append_axes(
+        "left",
+        size=vbar_w,
+        pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL,
+        sharey=ax)
+    style_lineplot_axes(ax_l2)
+    ax_l2.plot(neighborhood[n[1][0], :], si[1], color="C0", linewidth=1)
+    ax_l2.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
+    ax_l2.tick_params("x", top=True, labeltop=True, bottom=False, labelbottom=False)
+    ax_l2.tick_params("y", left=True, right=True)
+    # Legend style constants
+    cmap_vec = CMAP_DIVERGE
+    norm_vec = mpl.colors.Normalize(vmin=-1, vmax=1)
+    # Add a legend for vector 1
     ax_vec1 = div.append_axes(
         "bottom",
         vbar_w,
-        pad=(FONTSIZE_TICKLABEL + FONTSIZE_AXLABEL) / 72,
+        pad=lplot_w,
     )
-    ax_vec2 = div.append_axes(
-        "left",
-        vbar_w,
-        pad=0.35 + (FONTSIZE_TICKLABEL + FONTSIZE_AXLABEL) / 72,
-    )
-    cmap_vec = CMAP_DIVERGE
-    norm_vec = mpl.colors.Normalize(vmin=-1, vmax=1)
-    # Vector 1 legend
     ax_vec1.matshow(
         np.atleast_2d(vectors[0]),
         cmap=cmap_vec,
@@ -435,7 +474,12 @@ def plot_neighborhood(
             backgroundcolor=(1, 1, 1, 0.3),
             fontsize=FONTSIZE_TICKLABEL - 2,
         )
-    # Vector 2 legend
+    # Add a legend for vector 2
+    ax_vec2 = div.append_axes(
+        "left",
+        vbar_w,
+        pad=0.35 + (FONTSIZE_TICKLABEL + FONTSIZE_AXLABEL) / 72,
+    )
     ax_vec2.matshow(
         np.atleast_2d(vectors[1]).T,
         cmap=cmap_vec,
