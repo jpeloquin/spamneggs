@@ -388,7 +388,7 @@ def plot_neighborhood(
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
     im = ax.imshow(
         neighborhood.T,  # imshow swaps axes
-        cmap="Greys",
+        cmap="magma",
         extent=[si[0][0], si[0][-1], si[1][0], si[1][-1]],
         origin="lower",
     )
