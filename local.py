@@ -38,7 +38,7 @@ def plot_sample(analysis, id_label, Hs, H):
     )
     fig.fig.savefig(dir_H / f"{id_label}_Hessian.svg")
     # Plot the eigenvalues of the scaled Hessian matrix
-    w, v = ordered_eig(Hs)
+    w, v = np.linalg.eig(Hs)
     dir_H_eig = analysis.directory / "samples_plots_scaled_Hessian_eigenvalues"
     dir_H_eig.mkdir(exist_ok=True)
     fig = plot_eigenvalues_histogram(w, "Eigenvector Index", "Eigenvalue")
