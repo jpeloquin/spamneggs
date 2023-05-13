@@ -358,7 +358,11 @@ def plot_neighborhood(
     # everything is plot formatting.
     fig = Figure(constrained_layout=True)
     mat_w = 4
-    mat_h = mat_w * (relative_extent[1][1] - relative_extent[1][0]) / (relative_extent[0][1] - relative_extent[0][0])
+    mat_h = (
+        mat_w
+        * (relative_extent[1][1] - relative_extent[1][0])
+        / (relative_extent[0][1] - relative_extent[0][0])
+    )
     cbar_lpad = 12 / 72
     cbar_w = 0.2
     lplot_w = 0.5  # width of marginal line plot, apparently relative to main axes
@@ -410,7 +414,7 @@ def plot_neighborhood(
     cbar = fig.colorbar(im, cax=ax_cbar)
 
     def style_lineplot_axes(ax):
-        for k in ['top','bottom','left','right']:
+        for k in ["top", "bottom", "left", "right"]:
             ax.spines[k].set_linewidth(0.5)
             ax.spines[k].set_color(COLOR_DEEMPH)
         ax.tick_params("x", labelsize=FONTSIZE_TICKLABEL)
@@ -418,10 +422,8 @@ def plot_neighborhood(
 
     # Add a line plot along vector 1, crossing the origin
     ax_l1 = div.append_axes(
-        "bottom",
-        size=vbar_w,
-        pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL,
-        sharex=ax)
+        "bottom", size=vbar_w, pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL, sharex=ax
+    )
     style_lineplot_axes(ax_l1)
     ax_l1.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
     ax_l1.plot(si[0], neighborhood[:, n[0][0]], color="C0", linewidth=1)
@@ -430,10 +432,8 @@ def plot_neighborhood(
     ax_l1.tick_params("y")
     # Add a line plot along vector 2, crossing the origin
     ax_l2 = div.append_axes(
-        "left",
-        size=vbar_w,
-        pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL,
-        sharey=ax)
+        "left", size=vbar_w, pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL, sharey=ax
+    )
     style_lineplot_axes(ax_l2)
     ax_l2.plot(neighborhood[n[1][0], :], si[1], color="C0", linewidth=1)
     ax_l2.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)

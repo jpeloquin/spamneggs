@@ -1,15 +1,8 @@
-import matplotlib as mpl
 import numpy as np
-from matplotlib.figure import Figure
 
-from .core import ordered_eig
+from .numerics import eigenvalue_error_bfalt
 from .plot import (
-    CMAP_DIVERGE,
-    FONTSIZE_AXLABEL,
     FONTSIZE_FIGLABEL,
-    FONTSIZE_TICKLABEL,
-    FigAxCbar,
-    FigResult,
     plot_eigenvalues_histogram,
     plot_matrix,
 )
