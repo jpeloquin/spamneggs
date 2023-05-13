@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib as mpl
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -90,7 +91,7 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     return FigResultAxarr(fig, axarr)
 
 
-def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, cutoff=None):
+def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, errors=None):
     """Return bar plot of eigenvalues / singular values"""
     fig = Figure(constrained_layout=True)
     fig.set_size_inches((4, 3))
@@ -98,12 +99,11 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, cutoff=None):
     ax.set_axisbelow(True)
     ax.yaxis.grid(color=COLOR_DEEMPH, linewidth=0.5, linestyle="dotted")
     x = 1 + np.arange(len(values))
-    if cutoff is not None:
-        ax.axhline(cutoff, color=COLOR_DEEMPH, lw=1)
     ax.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
     ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
     ax.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
     bar_colors = np.full(len(values), "C0")
+    legend_handles = []
     if log:
         ax.set_yscale("log")
         sign = np.sign(values)
@@ -111,21 +111,33 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, cutoff=None):
         ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=12))
         ax.yaxis.set_minor_locator(mpl.ticker.LogLocator(numticks=999, subs="auto"))
         ax.yaxis.set_minor_formatter(mpl.ticker.NullFormatter())
-        ax.set_ylim(
-            (
-                10 ** np.floor(np.log10(np.min(values))),
-                10 ** np.ceil(np.log10(np.max(values))),
-            )
-        )
+        ymin = 10 ** np.floor(np.log10(np.min(values)))
+        ymax = 10 ** np.ceil(np.log10(np.max(values)))
+        if errors is not None:
+            ymax = max(ymax, 10 ** np.ceil(np.log10(np.max(errors))))
+        ax.set_ylim(ymin, ymax)
         bar_colors[sign < 0] = "C3"
-        ax.legend(
-            handles=[
-                Patch(facecolor="C0", label="Positive"),
-                Patch(facecolor="C3", label="Negative"),
-            ],
-            loc="upper right",
-        )
-    ax.bar(x, values, color=bar_colors)
+        legend_handles += [
+            Patch(facecolor="C0", label="Positive"),
+            Patch(facecolor="C3", label="Negative"),
+        ]
+    bars = ax.bar(x, values, color=bar_colors)
+    # Plot bounds
+    if errors is not None:
+        for c, b in zip(errors, bars):
+            width = b.properties()["width"]
+            xmin = b.properties()["x"]
+            xmax = xmin + width
+            ax.hlines(
+                c,
+                xmin=xmin,
+                xmax=xmax,
+                color="black",
+                lw=1,
+            )
+        legend_handles += [
+            Line2D([0], [0], color="black", linewidth=1, label="Error Bound")
+        ]
     for k in ax.spines:
         ax.spines[k].set_visible(False)
     ax.tick_params(
@@ -140,6 +152,11 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, cutoff=None):
         labelsize=FONTSIZE_TICKLABEL,
         labelcolor=COLOR_DEEMPH,
     )
+    if legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="upper right",
+        )
     return FigResult(fig, ax)
 
 

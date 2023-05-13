@@ -73,6 +73,22 @@ def tol(v, rtol=0.005, atol=1e-7):
     return max((rtol * v, atol))
 
 
+def eigenvalue_error_bfalt(A, w, V):
+    """Return alternate Baur–Fike bound on eigenvalue error
+
+    :param A: Original matrix
+
+    :param w: eigenvalues of A
+
+    :param V: matrix of eigenvectors of A, one eigenvector per column
+    """
+    κ = np.linalg.cond(V, p=2)
+    r = A @ V - w * V
+    rnorm = np.linalg.norm(r, ord=2, axis=0)
+    vnorm = np.linalg.norm(V, ord=2, axis=0)
+    return κ * rnorm / vnorm
+
+
 def plot_step_sweep(sweep: StepSweep):
     n = sweep.v.shape[0]
     fig_err = fig_template_axarr(n, n, xlabel="Step size", ylabel="|Error|")

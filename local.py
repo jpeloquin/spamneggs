@@ -34,6 +34,9 @@ def plot_sample(analysis, id_label, Hs, H):
     w, v = np.linalg.eig(Hs)
     dir_H_eig = analysis.directory / "samples_plots_scaled_Hessian_eigenvalues"
     dir_H_eig.mkdir(exist_ok=True)
-    fig = plot_eigenvalues_histogram(w, "Eigenvector Index", "Eigenvalue")
+    # w_err = eigenvalue_error_bfalt(Hs, w, v)
+    fig = plot_eigenvalues_histogram(
+        w, "Eigenvector Index", "Eigenvalue",
+    )
     fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
     fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues.svg")
