@@ -1,15 +1,18 @@
 """Numerical analysis of functions"""
+import functools
 from pathlib import Path
 from typing import Iterable
 
 from matplotlib.figure import Figure
 import numdifftools as nd
 import numpy as np
-from matplotlib.ticker import LogLocator, ScalarFormatter
+from pandas import DataFrame
 from scipy.signal import savgol_filter
 from scipy.stats import gaussian_kde
 
+from waffleiron.febio import CheckError, FEBioError
 from .plot import FONTSIZE_AXLABEL, FONTSIZE_FIGLABEL, fig_template_axarr
+from .util import Counter, parameter_to_str
 
 
 class OptimumStepError(ValueError):
@@ -299,3 +302,92 @@ def valid_interval_from_step_sweep(error, tol):
         return idx_largest_span[0], idx_largest_span[-1]
     else:
         return tuple()
+
+
+def add_eval_counter(f):
+    eval_counter = Counter()
+
+    def g(*args, **kwargs):
+        nonlocal eval_counter
+        eval_counter.increment()
+        return f(*args, **kwargs)
+
+    return g, eval_counter
+
+
+def run_step_size_check(
+    parameter_defs,
+    samples,
+    make_f,
+    steps,
+    scale_parameters,
+    unscale_parameters,
+    dir_out,
+):
+    """Run finite difference step size error analysis for the Hessian
+
+    :param parameter_defs: Parameter defintions, as in a case generator.
+
+    :param samples: Sequence of tuple-like parameter values.
+
+    :param make_f: Function of the parameter values for the current sample → a
+    function of parameter values that returns a scalar.  This structure allows the
+    step size check to evaluate cost functions that depend on both the finite
+    difference derivative support points and the sample point.
+
+    :param steps: Sequence of step sizes to sweep across, ordered small to large.
+
+    :param scale_parameters:
+
+    :param unscale_parameters:
+    """
+    dir_out.mkdir(exist_ok=True)
+    dir_Δ = dir_out / "sample_plots_incremental_Δ"
+    dir_Δ.mkdir(exist_ok=True)
+    dir_err = dir_out / "sample_plots_error"
+    dir_err.mkdir(exist_ok=True)
+
+    table = {"Sample": [], "Evals": [], "Result": []} | {
+        parameter_to_str(p): [] for p in parameter_defs
+    }
+    sweeps = []
+    for i, x0 in enumerate(samples):
+        table["Sample"].append(i)
+        for p, v in zip(parameter_defs, x0):
+            table[parameter_to_str(p)].append(v)
+        fs = scaled_args(make_f(x0), unscale_parameters)
+        ψs, evals = add_eval_counter(fs)
+
+        def Hs(xs, h):
+            return nd.Hessian(ψs, method="central", step=h)(xs)
+
+        x0s = scale_parameters(x0)
+        try:
+            sweep = StepSweep(Hs, x0s, steps)
+        except (FEBioError, CheckError) as e:
+            table["Result"].append(e.__class__.__name__)
+            continue
+        else:
+            table["Result"].append("Success")
+        finally:
+            table["Evals"].append(evals)
+        fig_Δ, fig_err = plot_step_sweep(sweep)
+        fig_Δ.fig.savefig(dir_Δ / f"{i}_incremental_Δ.svg")
+        fig_err.fig.savefig(dir_err / f"{i}_error.svg")
+        sweeps.append(sweep)
+    DataFrame(table).to_csv(dir_out / "samples.csv", index=False)
+    fig_combined, fig_components = plot_step_sweep_summary(sweeps)
+    fig_combined.savefig(dir_out / "Hessian_valid_step_sizes_-_all_components.svg")
+    fig_components.savefig(dir_out / "Hessian_valid_step_sizes_-_by_component.svg")
+    # TODO: If successful run, clean up the case generation directory.
+
+
+def scaled_args(fun, unscale):
+    """Decorator to make a function of θ accept scaled_args θ"""
+
+    @functools.wraps(fun)
+    def fun_s(θ_s, *args, **kwargs):
+        θ = unscale(θ_s)
+        return fun(θ, *args, **kwargs)
+
+    return fun_s

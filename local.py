@@ -1,6 +1,5 @@
 import numpy as np
 
-from .numerics import eigenvalue_error_bfalt
 from .plot import (
     FONTSIZE_FIGLABEL,
     plot_eigenvalues_histogram,
