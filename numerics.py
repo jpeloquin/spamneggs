@@ -222,7 +222,6 @@ def plot_step_sweep_summary(sweeps: Iterable[StepSweep]):
             if j == 0:
                 ax.set_ylabel("density")
     fig_components.suptitle("Valid step size interval", fontsize=FONTSIZE_FIGLABEL)
-    fig_components.savefig("test.svg")
     return fig_combined, fig_components
 
 
