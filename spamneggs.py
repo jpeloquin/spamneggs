@@ -59,6 +59,9 @@ from .plot import (
 )
 from .variables import *
 
+
+# TODO: This can only be modified through spam.spamneggs.NUM_WORKERS, which is
+# nonintuitive
 NUM_WORKERS = psutil.cpu_count(logical=False)
 
 COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as zero
