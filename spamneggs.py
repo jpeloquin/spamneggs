@@ -554,7 +554,7 @@ def do_parallel(cases: Mapping[str, object], fun, on_case_error="stop"):
         # Log the run outcome
         output[case.name] = {"Case": case, "Status": status}
         # Should we continue submitting cases?
-        if isinstance(status, Exception) and on_case_error == "stop":
+        if not status == SUCCESS and on_case_error == "stop":
             print(
                 f"While working on case {case.name}, a {status.__class__.__name__} was encountered.  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop.\n"
             )
@@ -686,17 +686,27 @@ def run_sensitivity(
 
     # Check if error terminations prevent analysis of results
     for nm, (tab, pth) in groups.items():
-        m_error = tab["status"] != "Run: Success"
-        if np.any(m_error):
+        n_run_error = np.sum(tab["status"] != "Run: Success")
+        n_success = np.sum(tab["status"] == "Run: Success")
+        n_not_run = int(np.sum([s.startswith("Generate") for s in tab["status"]]))
+        error_report = (
+            f"\nOf {len(tab)} {nm} sensitivity cases:\n"
+            f"{n_success} cases ran successfully\n"
+            f"{n_run_error} cases had a run error\n"
+            f"{n_not_run} cases did not have a run attempt\n"
+            f"See {pth}"
+        )
+        print(error_report)
+        if n_run_error != 0:
             if on_case_error == "hold":
-                raise Exception(
-                    f"Of {len(tab)} sensitivity cases, {np.sum(tab['status'] == 'Run: Success')} cases ran successfully and {np.sum(tab['status'] != 'Run: Success')} did not.  Because `on_case_error` = '{on_case_error}', the sensitivity analysis was stopped prior to data analysis.  The error terminations are listed in `{pth}`.  To continue, correct the error terminations and call `tabulate` and `plot_sensitivity` manually."
+                print(
+                    f"Because there at least one simulation had an error and `on_case_error` = 'hold', simulation was attempted for all cases but the sensitivity analysis was stopped prior to data analysis.  To continue with the sensitivity analysis, manually correct the error terminations (or not) and call `tabulate` and `plot_sensitivity`."
                 )
             elif on_case_error == "stop":
-                # An error message would have been printed earlier when a model
-                # generation or run failed and the remaining generations / runs
-                # were cancelled.  So we just exit.
-                sys.exit()
+                print(
+                    f"Because there was at least one simulation had an error and `on_case_error` = 'stop', the sensitivity analysis was stopped after the first simulation error, before running all cases."
+                )
+            sys.exit()
     # Tabulate and plot the results
     tabulate(case_generator)
     makefig_sensitivity_all(case_generator)
