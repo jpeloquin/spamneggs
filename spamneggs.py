@@ -559,7 +559,7 @@ def do_parallel(cases: Mapping[str, object], fun, on_case_error="stop"):
         # Should we continue submitting cases?
         if not status == SUCCESS and on_case_error == "stop":
             print(
-                f"While working on case {case.name}, a {status.__class__.__name__} was encountered.  Because `on_case_error` = {on_case_error}, do_parallel will allow any already-running cases to finish, then stop.\n"
+                f"While working on case {case.name}, a {status.__class__.__name__} was encountered.  Because `on_case_error` = {on_case_error}, do_parallel will allow each currently running case to finish, then stop.\n"
             )
             pool.close()
             break
