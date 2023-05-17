@@ -303,15 +303,13 @@ def valid_interval_from_step_sweep(error, tol):
         return tuple()
 
 
-def add_eval_counter(f):
-    eval_counter = Counter()
-
+def add_counter(f, counter: Counter):
     def g(*args, **kwargs):
-        nonlocal eval_counter
-        eval_counter.increment()
+        nonlocal counter
+        counter.increment()
         return f(*args, **kwargs)
 
-    return g, eval_counter
+    return g
 
 
 def run_step_size_check(
@@ -346,35 +344,39 @@ def run_step_size_check(
     dir_err = dir_out / "sample_plots_error"
     dir_err.mkdir(exist_ok=True)
 
-    table = {"Sample": [], "Evals": [], "Result": []} | {
-        parameter_to_str(p): [] for p in parameter_defs
-    }
+    def Hs(xs, h):
+        return nd.Hessian(ψs, method="central", step=h)(xs)
+
+    rows = []
     sweeps = []
     for i, x0 in enumerate(samples):
-        table["Sample"].append(i)
+        row = {"Sample": i, "Evals": 0, "Result": ""}
         for p, v in zip(parameter_defs, x0):
-            table[parameter_to_str(p)].append(v)
-        fs = scaled_args(make_f(x0), unscale_parameters)
-        ψs, evals = add_eval_counter(fs)
-
-        def Hs(xs, h):
-            return nd.Hessian(ψs, method="central", step=h)(xs)
-
-        x0s = scale_parameters(x0)
+            row[parameter_to_str(p)] = v
+        evals = Counter(1)  # include initial f(x0) evaluation
         try:
+            f = make_f(x0)
+            fs = scaled_args(f, unscale_parameters)
+            ψs = add_counter(fs, evals)
+            x0s = scale_parameters(x0)
             sweep = StepSweep(Hs, x0s, steps)
         except (FEBioError, CheckError) as e:
-            table["Result"].append(e.__class__.__name__)
+            row["Result"] = e.__class__.__name__
             continue
+        except Exception as e:
+            raise e
         else:
-            table["Result"].append("Success")
+            row["Result"] = "Success"
         finally:
-            table["Evals"].append(evals)
+            row["Evals"] = str(evals)
+            rows.append(row)
+            # Write table at end of each loop to show progress
+            DataFrame(rows).to_csv(dir_out / "samples.csv", index=False)
+
         fig_Δ, fig_err = plot_step_sweep(sweep)
         fig_Δ.fig.savefig(dir_Δ / f"{i}_incremental_Δ.svg")
         fig_err.fig.savefig(dir_err / f"{i}_error.svg")
         sweeps.append(sweep)
-    DataFrame(table).to_csv(dir_out / "samples.csv", index=False)
     fig_combined, fig_components = plot_step_sweep_summary(sweeps)
     fig_combined.savefig(dir_out / "Hessian_valid_step_sizes_-_all_components.svg")
     fig_components.savefig(dir_out / "Hessian_valid_step_sizes_-_by_component.svg")
