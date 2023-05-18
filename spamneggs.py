@@ -705,11 +705,12 @@ def run_sensitivity(
                 print(
                     f"Because there at least one simulation had an error and `on_case_error` = 'hold', simulation was attempted for all cases but the sensitivity analysis was stopped prior to data analysis.  To continue with the sensitivity analysis, manually correct the error terminations (or not) and call `tabulate` and `plot_sensitivity`."
                 )
+                sys.exit()
             elif on_case_error == "stop":
                 print(
                     f"Because there was at least one simulation had an error and `on_case_error` = 'stop', the sensitivity analysis was stopped after the first simulation error, before running all cases."
                 )
-            sys.exit()
+                sys.exit()
     # Tabulate and plot the results
     tabulate(case_generator)
     makefig_sensitivity_all(case_generator)
