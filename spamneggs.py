@@ -465,11 +465,8 @@ def _trap_err(fun):
         name, case = args
         try:
             return fun(args)
-        except Exception as err:
-            print(f"Case {name}:")
-            # For an error in Python code we want to print the traceback.  Special
-            # simulation errors should be trapped elsewhere; only truly exceptional
-            # exceptions should hit this trap.
+        except (FEBioError, CheckError) as err:
+            print(f"Case {name}:\n")
             traceback.print_exc()
             print()
             # PROBLEM: If this is being used for case generation, the input "case"
