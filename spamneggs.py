@@ -1741,7 +1741,10 @@ def makefig_sensitivity_tsvars_heatmap(
         rcbar_areaw = 0
         axw = base_axw + cbar_areaw
 
-    fig, axarr, = fig_blank_tsvars_by_parameter(
+    (
+        fig,
+        axarr,
+    ) = fig_blank_tsvars_by_parameter(
         len(analysis.parameters),
         len(analysis.variables),
         left_blankw=dendro_axw,

@@ -1,9 +1,11 @@
 import numpy as np
 
+from .numerics import eigenvalue_error_bfalt
 from .plot import (
     FONTSIZE_FIGLABEL,
-    plot_eigenvalues_histogram,
+    plot_sample_eigenvalues_hist,
     plot_matrix,
+    plot_sample_eigenvalues_line,
 )
 
 
@@ -45,7 +47,7 @@ class LsqCostFunctionFactory:
         return ψ
 
 
-def plot_sample(analysis, id_label, Hs, H):
+def plot_sample(analysis, id_label, Hs, H, Herr=None):
     # Plot the scaled Hessian matrix
     dir_Hs = analysis.directory / "samples_plots_scaled_Hessian"
     dir_Hs.mkdir(exist_ok=True)
@@ -67,15 +69,20 @@ def plot_sample(analysis, id_label, Hs, H):
         tick_labels=[p.name for p in analysis.parameters],
     )
     fig.fig.savefig(dir_H / f"{id_label}_Hessian.svg")
+
     # Plot the eigenvalues of the scaled Hessian matrix
     w, v = np.linalg.eig(Hs)
     dir_H_eig = analysis.directory / "samples_plots_scaled_Hessian_eigenvalues"
     dir_H_eig.mkdir(exist_ok=True)
-    # w_err = eigenvalue_error_bfalt(Hs, w, v)
-    fig = plot_eigenvalues_histogram(
-        w,
-        "Eigenvector Index",
-        "Eigenvalue",
-    )
+    ## Histogram
+    nparams = len(analysis.parameters)
+    err = {"B–F auto": eigenvalue_error_bfalt(Hs, w, v)}
+    if Herr is not None:
+        err["ΔH"] = np.linalg.norm(np.full((nparams, nparams), 10**-2))
+    fig = plot_sample_eigenvalues_hist(w, "Eigenvector Index", "Eigenvalue", errors=err)
     fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
-    fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues.svg")
+    fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues_hist.svg")
+    ## Line plot
+    fig = plot_sample_eigenvalues_line(w, errors=err)
+    fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
+    fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues_line.svg")

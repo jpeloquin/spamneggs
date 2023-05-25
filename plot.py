@@ -1,5 +1,6 @@
 """Utility functions to support plots in other modules"""
 from collections import namedtuple
+from typing import Optional
 
 import numpy as np
 import matplotlib as mpl
@@ -20,6 +21,16 @@ FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
 WS_PAD_ALL = 2 / 72
+
+EIGENVALUE_ERROR_COLORS = [
+    "tab:green",
+    "tab:purple",
+    "tab:orange",
+    "tab:pink",
+    "tab:cyan",
+    "tab:brown",
+    "tab:gray",
+]
 
 mpl.rcParams["savefig.dpi"] = 300  # we use imshow
 
@@ -91,17 +102,30 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     return FigResultAxarr(fig, axarr)
 
 
-def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, errors=None):
+def _plot_sample_eigenvalues_errors(errors, ax, w=1):
+    """Add eigenvalue errors to axis with legend
+
+    Used by `plot_sample_eigenvalues_hist` and `plot_sample_eigenvalues_line`
+
+    :param
+
+    """
+    legend_handles = []
+
+
+def plot_sample_eigenvalues_hist(
+    values, xlabel, ylabel, log=True, errors: Optional[dict] = None
+):
     """Return bar plot of eigenvalues / singular values"""
+    x = 1 + np.arange(len(values))
     fig = Figure(constrained_layout=True)
     fig.set_size_inches((4, 3))
     ax = fig.add_subplot()
     ax.set_axisbelow(True)
     ax.yaxis.grid(color=COLOR_DEEMPH, linewidth=0.5, linestyle="dotted")
-    x = 1 + np.arange(len(values))
     ax.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
-    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
     ax.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
     bar_colors = np.full(len(values), "C0")
     legend_handles = []
     if log:
@@ -114,7 +138,9 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, errors=None):
         ymin = 10 ** np.floor(np.log10(np.min(values)))
         ymax = 10 ** np.ceil(np.log10(np.max(values)))
         if errors is not None:
-            ymax = max(ymax, 10 ** np.ceil(np.log10(np.max(errors))))
+            ymax = max(
+                ymax, 10 ** np.ceil(np.log10(np.max(np.hstack(list(errors.values())))))
+            )
         ax.set_ylim(ymin, ymax)
         bar_colors[sign < 0] = "C3"
         legend_handles += [
@@ -122,24 +148,23 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, errors=None):
             Patch(facecolor="C3", label="Negative"),
         ]
     bars = ax.bar(x, values, color=bar_colors)
-    # Plot bounds
     if errors is not None:
-        for c, b in zip(errors, bars):
-            width = b.properties()["width"]
-            xmin = b.properties()["x"]
-            xmax = xmin + width
-            ax.hlines(
-                c,
-                xmin=xmin,
-                xmax=xmax,
-                color="black",
-                lw=1,
-            )
-        legend_handles += [
-            Line2D([0], [0], color="black", linewidth=1, label="Error Bound")
-        ]
-    for k in ax.spines:
-        ax.spines[k].set_visible(False)
+        for i, (k, error) in enumerate(errors.items()):
+            if not hasattr(error, "__iter__"):
+                error = len(values) * (error,)
+            for e, b in zip(error, bars):
+                c = b.properties()["x"] + 0.5 * b.properties()["width"]
+                ax.hlines(
+                    e,
+                    xmin=c - 0.5,
+                    xmax=c + 0.5,
+                    color=EIGENVALUE_ERROR_COLORS[i],
+                    lw=1,
+                )
+            legend_handles += [
+                Line2D([0], [0], color=EIGENVALUE_ERROR_COLORS[i], linewidth=1, label=k)
+            ]
+    remove_spines(ax)
     ax.tick_params(
         axis="x",
         color=COLOR_DEEMPH,
@@ -156,7 +181,70 @@ def plot_eigenvalues_histogram(values, xlabel, ylabel, log=True, errors=None):
         ax.legend(
             handles=legend_handles,
             loc="upper right",
+            fontsize=FONTSIZE_TICKLABEL,
         )
+    return FigResult(fig, ax)
+
+
+def plot_sample_eigenvalues_line(
+    values,
+    xlabel="Eigenvector Index",
+    ylabel="Eigenvalue",
+    errors: Optional[dict] = None,
+):
+    """Plot eigenvalues as horizontal lines on a log scale"""
+    x = 1 + np.arange(len(values))
+    fig = Figure(constrained_layout=True)
+    fig.set_size_inches((5, 3 * 5 / 4))
+    ax = fig.add_subplot()
+    ax.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
+    ax.set_yscale("log")
+    remove_spines(ax)
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=99))
+    if np.any(values == 0):
+        raise NotImplementedError(
+            "No support yet for plotting zero eigenvalues, which shouldn't exist anyway."
+        )
+    for i, v in enumerate(values):
+        if v < 0:
+            color = "tab:red"
+        else:
+            color = "tab:blue"
+        c = 0.5 + i
+        ax.hlines(abs(v), xmin=c - 0.4, xmax=c + 0.4, color=color, lw=1.5)
+    legend_handles = [
+        Line2D([0], [0], color="tab:blue", label="Positive", lw=1.5),
+        Line2D([0], [0], color="tab:red", label="Negative", lw=1.5),
+    ]
+    if errors is not None:
+        for j, (k, error) in enumerate(errors.items()):
+            if not hasattr(error, "__iter__"):
+                error = len(values) * (error,)
+            for i, e in enumerate(error):
+                c = 0.5 + i
+                ax.hlines(
+                    e,
+                    xmin=c - 0.4,
+                    xmax=c + 0.4,
+                    color=EIGENVALUE_ERROR_COLORS[j],
+                    linestyle=":",
+                    lw=1,
+                )
+            legend_handles += [
+                Line2D(
+                    [0],
+                    [0],
+                    color=EIGENVALUE_ERROR_COLORS[j],
+                    linewidth=1,
+                    linestyle=":",
+                    label=k,
+                )
+            ]
+    ax.legend(
+        handles=legend_handles, loc="upper right", fontsize=FONTSIZE_TICKLABEL, ncol=2
+    )
     return FigResult(fig, ax)
 
 
