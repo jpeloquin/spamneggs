@@ -133,6 +133,12 @@ class Analysis:
 
     def case_data(self, case_id):
         """Read variables from a single case analysis."""
+        row = self.table_auto_cases.loc[case_id]
+        # TODO: Unify tables for automatic and named cases
+        if row["status"] != "Run: Success":
+            raise ValueError(
+                f"No data available for case {case_id} with status {row['status']}."
+            )
         pth_record = self.base_directory / "case_output" / f"{case_id}_vars.json"
         pth_timeseries = (
             self.base_directory / "case_output" / f"{case_id}_timeseries_vars.csv"
@@ -187,6 +193,11 @@ class Analysis:
             case_data = DataFrame(case_data)
             tsdata = pd.concat([tsdata, case_data])
         return tsdata
+
+    def update_table_auto_cases(self, table):
+        """Write modified cases table to analysis directory"""
+        pth_cases = self.base_directory / f"generated_cases.csv"
+        table.reset_index().to_csv(pth_cases, index=False)
 
 
 class Case:
@@ -594,6 +605,45 @@ def expand_run_errors(cases: DataFrame):
     for error in errors:
         out[error] = errors[error]
     return out, tuple(errors.keys())
+
+
+def import_cases(generator: CaseGenerator):
+    """Recheck all auto-generated cases in analysis and update solution status
+
+    This function is meant to be used when you're manually moving simulation files
+    between computers.
+
+    """
+    # TODO: Handle named cases
+    analysis = Analysis(generator)
+    cases = analysis.table_auto_cases
+    for i in cases.index:
+        pth_feb = generator.directory / cases.loc[i, "path"]
+        # Check if there is already a run message; do not overwrite it.  Once
+        # `import_cases` runs the same suite of checks that the original run did,
+        # we can overwrite it.
+        if cases.loc[i, "status"].startswith("Run: "):
+            continue
+        # Check if the model file is even there
+        if not pth_feb.exists():
+            cases.loc[i, "status"] = "Missing"
+            continue
+        # Check if the simulation files exist
+        pth_log = pth_feb.with_suffix(".log")
+        pth_xplt = pth_feb.with_suffix(".xplt")
+        if not (pth_log.exists() and pth_xplt.exists()):
+            continue
+        # Check if the simulation ran successfully
+        log = wfl.febio.LogFile(pth_feb.with_suffix(".log"))
+        if log.termination is None:
+            continue
+        elif log.termination == "Normal":
+            # TODO: Incorporate generator's checks.  Need to reconstitute the case,
+            #  since check functions accept the case as their argument.
+            cases.loc[i, "status"] = f"Run: {SUCCESS}"
+        else:
+            cases.loc[i, "status"] = f"Run: {log.termination} termination"
+    analysis.update_table_auto_cases(cases)
 
 
 def run_case(name, case):
