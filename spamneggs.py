@@ -56,6 +56,7 @@ from .plot import (
     FONTSIZE_FIGLABEL,
     FONTSIZE_AXLABEL,
     FONTSIZE_TICKLABEL,
+    remove_spines,
 )
 from .variables import *
 
@@ -2296,6 +2297,7 @@ def corr_svd(correlations_table):
     svd_data = {
         "singular values": s.tolist(),
         "parameters": correlations.index.levels[0].values.tolist(),
+        "variables": correlations.index.levels[1].values.tolist(),
         "principal axes": [vh[i].tolist() for i in range(len(vh))],
     }
     return svd_data
@@ -2305,29 +2307,44 @@ def fig_corr_singular_values(svd_data, cutoff=0.01):
     """Return figure with singular values from SVD of sensitivity vectors"""
     s = np.array(svd_data["singular values"])
     fig = Figure()
-    fig.set_size_inches((4, 3))
-    FigureCanvas(fig)
-    ax = fig.add_subplot()
+    # Consider using make_axes_locatable so spectrum holds its width
+    w_hist = 1 + 0.5 * len(svd_data["parameters"])
+    w_spect = 1
+    w_fig = w_hist + w_spect
+    fig.set_size_inches((w_fig, 3))
+    gs = fig.add_gridspec(1, 2, width_ratios=(w_hist, w_spect))
+    # Histogram
+    ax_hist = fig.add_subplot(gs[0, 0])
     x = 1 + np.arange(len(s))
-    ax.axhline(100 * cutoff, color=COLOR_DEEMPH, lw=1)
-    ax.bar(x, 100 * s / np.sum(s))
-    ax.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
-    ax.set_ylabel("Eigenvalue [%]", fontsize=FONTSIZE_AXLABEL)
-    for k in ax.spines:
-        ax.spines[k].set_visible(False)
-    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
-    ax.tick_params(
+    ax_hist.axhline(100 * cutoff, color=COLOR_DEEMPH, lw=1, linestyle=":")
+    ax_hist.bar(x, 100 * s / np.sum(s))
+    ax_hist.set_xlabel("Eigenvector Index", fontsize=FONTSIZE_AXLABEL)
+    ax_hist.set_ylabel("Singular Value [%]", fontsize=FONTSIZE_AXLABEL)
+    remove_spines(ax_hist)
+    ax_hist.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax_hist.tick_params(
         axis="x",
         color=COLOR_DEEMPH,
         labelsize=FONTSIZE_TICKLABEL,
         labelcolor=COLOR_DEEMPH,
     )
-    ax.tick_params(
+    ax_hist.tick_params(
         axis="y",
         color=COLOR_DEEMPH,
         labelsize=FONTSIZE_TICKLABEL,
         labelcolor=COLOR_DEEMPH,
     )
+    # Spectrum
+    ax_s = fig.add_subplot(gs[0, 1])
+    ax_s.set_yscale("log")
+    ax_s.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=99))
+    ax_s.yaxis.get_minor_locator().set_params(numticks=50)
+    ax_s.xaxis.set_major_locator(mpl.ticker.NullLocator())
+    ax_s.set_ylabel("Singular Value", fontsize=FONTSIZE_AXLABEL)
+    remove_spines(ax_s)
+    for v in svd_data["singular values"]:
+        ax_s.axhline(v, lw=1)
+    ax_s.axhline(cutoff * np.sum(s), color=COLOR_DEEMPH, lw=1, linestyle=":")
     fig.tight_layout()
     return fig
 
