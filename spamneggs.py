@@ -133,8 +133,17 @@ class Analysis:
         return cases
 
     def case_data(self, case_id):
-        """Read variables from a single case analysis."""
-        row = self.table_auto_cases.loc[case_id]
+        """Read variables from a single case analysis
+
+        Named cases have string IDs; automatically generated cases have integer IDs.
+
+        """
+        if isinstance(case_id, str):
+            row = self.table_named_cases.loc[case_id]
+        elif isinstance(case_id, int):
+            row = self.table_auto_cases.loc[case_id]
+        else:
+            raise TypeError(f"Case ID must be string or integer.  Was {type(case_id)}.")
         # TODO: Unify tables for automatic and named cases
         if row["status"] != "Run: Success":
             raise ValueError(
