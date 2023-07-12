@@ -221,7 +221,6 @@ class Case:
         variables: dict[str, Union[XpltDataSelector, TextDataSelector, FunctionVar]],
         directory: Union[str, Path],
         checks: Iterable[Callable] = tuple(),
-        solution: Model = None,
     ):
         """Return Case object
 
@@ -240,9 +239,6 @@ class Case:
         :param checks: Check functions.
 
         :param directory: Parent directory to which the case's files will be written.
-
-        :param solution: waffleiron.Model object for this case including solution.
-        Only provide this if the case's simulation has already run.
 
         """
         self.parameter_list = tuple(parameters)  # need to store parameter *order*
@@ -264,7 +260,6 @@ class Case:
         self.directory = Path(directory)
         if not self.directory.exists():
             raise ValueError(f"Directory does not exist: {self.directory}")
-        self._solution = solution
 
     def __repr__(self):
         return (
@@ -273,8 +268,7 @@ class Case:
             f"parameter_values={self.parameters_q},"
             f"variables={self.variables_list},"
             f"directory={self.directory},"
-            f"checks={self.checks},"
-            f"solution={self._solution})"
+            f"checks={self.checks})"
         )
 
     @property
@@ -288,16 +282,6 @@ class Case:
     @property
     def xplt_file(self):
         return self.directory / f"case={self.name}.xplt"
-
-    @property
-    def solution(self):
-        if self._solution is None:
-            self._solution = wfl.load_model(self.feb_file)
-        return self._solution
-
-    def unload_solution(self):
-        """Break reference to in-memory solution"""
-        self._solution = None
 
     def run(self, raise_on_check_fail=True):
         """Run the case's simulation and its checks
@@ -338,6 +322,13 @@ class Case:
                 )
             return check_failures
         return SUCCESS
+
+    def solution(self):
+        """Return waffleiron Model object with solution"""
+        model = wfl.load_model(self.feb_file)
+        if model.solution is None:
+            raise ValueError(f"Case {self.name}: Model has no solution")
+        return model
 
 
 class CaseGenerator:
@@ -2591,7 +2582,7 @@ def tabulate_case(case):
     record = {"instantaneous variables": {}, "time series variables": {}}
     for varname, var in case.variables_list.items():
         if isinstance(var, XpltDataSelector):
-            xplt_data = case.solution.solution
+            xplt_data = case.solution().solution
             # Check component selector validity
             dtype = xplt_data.variables[var.variable]["type"]
             oneids = (str(i + 1) for i in var.component)
