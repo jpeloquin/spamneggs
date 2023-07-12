@@ -271,6 +271,9 @@ class Case:
             f"checks={self.checks})"
         )
 
+    def __str__(self):
+        return f"Case {self.name}"
+
     @property
     def feb_file(self):
         return self.directory / f"case={self.name}.feb"
