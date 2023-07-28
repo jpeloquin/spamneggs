@@ -28,7 +28,10 @@ class Parameter:
         return f"Parameter({self.name}, {self.units})"
 
     def __str__(self):
-        return f"{self.name} [{self.units}]"
+        if self.units == "1":
+            return f"{self.name} [1]"
+        else:
+            return f"{self.name} [{self.units:~P}]"
 
 
 def ordered_eig(A):
