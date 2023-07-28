@@ -102,15 +102,10 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     return FigResultAxarr(fig, axarr)
 
 
-def _plot_sample_eigenvalues_errors(errors, ax, w=1):
-    """Add eigenvalue errors to axis with legend
 
-    Used by `plot_sample_eigenvalues_hist` and `plot_sample_eigenvalues_line`
 
-    :param
 
     """
-    legend_handles = []
 
 
 def plot_sample_eigenvalues_hist(
