@@ -110,7 +110,7 @@ class Analysis:
 
     # TODO: Write JSON or XML serialization
     def __init__(self, generator, mkdir=True):
-        self.name = None
+        self.name = generator.name
         # Directory containing generated_cases, case_output, etc.
         self.base_directory = generator.directory
         # Directory in which to write files from this analysis
