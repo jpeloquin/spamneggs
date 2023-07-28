@@ -159,7 +159,7 @@ class Analysis:
         return record, timeseries
 
     def cases_tsdata(self, cases=None):
-        """Return table of time series data for multiple cases
+        """Return table of time series data for multiple succussfully-run cases
 
         :param cases: Optional DataFrame of cases.  If `cases` is provided,
         `cases_tsdata` will return time series data for the cases tabulated therein.  By
