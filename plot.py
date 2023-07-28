@@ -21,6 +21,7 @@ FONTSIZE_FIGLABEL = 12
 FONTSIZE_AXLABEL = 10
 FONTSIZE_TICKLABEL = 8
 WS_PAD_ALL = 2 / 72
+LABELH_MULT = 1.5  # multiple of font size to use for label height
 
 EIGENVALUE_ERROR_COLORS = [
     "tab:green",
@@ -102,10 +103,104 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     return FigResultAxarr(fig, axarr)
 
 
+def plot_reference_tsdata(values, ax, varname):
+    """Plot reference timeseries data into an axes"""
+    x = np.arange(len(values))
+    ax.plot(x, values, color="k")
+    # Set the axes limits to the min and max of the data, to match the axes limits
+    # used for the heatmap images.
+    ax.set_xlim(x[0], x[-1])
+    ax.set_title(
+        varname,
+        fontsize=FONTSIZE_FIGLABEL,
+        loc="left",
+        pad=3.0,
+    )
+    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
+    ax.set_facecolor("#F6F6F6")
 
 
+def fig_blank_tsvars_by_parameter(
+    nparams,
+    nvars,
+    left_blankw=FONTSIZE_AXLABEL / 72,
+    right_blankw=4 / 72,
+    axw=5.0,
+    axh=0.75,
+):
+    """Return figure and axes for plotting tsvars by parameter
+
+    :param axw: width of each axes' plotting area in inches
+
+    :param axh: height of each axes' plotting area in inches
 
     """
+    # Calculate widths of figure elements in inches.
+    fig_llabelw = LABELH_MULT * FONTSIZE_FIGLABEL / 72
+    # ^ width of parameters label on left of figure
+    ax_llabelw = LABELH_MULT * FONTSIZE_AXLABEL / 72
+    ax_hspace = LABELH_MULT * FONTSIZE_AXLABEL / 72
+    # ^ horizontal spacing between adjacent axes
+    ax_bticksh = FONTSIZE_AXLABEL / 72
+    # ^ vertical spacing between adjacent axes
+    central_areaw = ax_llabelw + (nvars * axw) + ax_hspace * (nvars - 1)
+    figw = left_blankw + fig_llabelw + central_areaw + right_blankw
+
+    # Calculate heights of figure elements
+    fig_tlabelh = LABELH_MULT * FONTSIZE_FIGLABEL / 72  # "Time series variables"
+    ax_tlabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # Variable names
+    # ^ height allocated for variable name
+    ax_blabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # "Time Point"
+    # ^ height allocated for time axis label
+    ax_bticksh = 1.3 * LABELH_MULT * FONTSIZE_TICKLABEL / 72
+    # ^ height allocated for x-axis tick labels, per axes
+    ax_vspace = 0
+    nparams = nparams + 1
+    # ^ number of axes high; the +1 is for a time series line plot
+    central_areah = ax_blabelh + (ax_bticksh + axh) * nparams + ax_tlabelh
+    figh = central_areah + fig_tlabelh
+
+    fig = Figure(figsize=(figw, figh))
+
+    # Coordinates of bounding box of central area with plots
+    central_l = fig_llabelw + left_blankw
+    # ^ left coord of central plotting area; this includes parameter names and any
+    # axes-specific colorbars
+    axes_l = central_l + ax_llabelw
+    axes_b = ax_blabelh + ax_bticksh
+    # ^ bottom coord of bottom axes in plots area; this only includes the axes
+    axes_t = axes_b + (nparams - 1) * (ax_bticksh + ax_vspace) + nparams * axh
+
+    # Create the axes
+    axarr = np.full((nparams, nvars), None)
+    for i in range(nvars):
+        for j in range(nparams):
+            l = axes_l + i * (ax_hspace + axw)
+            w = axw
+            b = axes_b + j * (ax_vspace + ax_bticksh + axh)
+            h = axh
+            ax = fig.add_axes(
+                (l / figw, b / figh, w / figw, h / figh),
+            )
+            axarr[j, i] = ax
+            ax.tick_params(
+                axis="x",
+                color=COLOR_DEEMPH,
+                labelsize=FONTSIZE_TICKLABEL,
+                labelcolor=COLOR_DEEMPH,
+            )
+            ax.tick_params(
+                axis="y",
+                color=COLOR_DEEMPH,
+                labelsize=FONTSIZE_TICKLABEL,
+                labelcolor=COLOR_DEEMPH,
+            )
+            for spine in ("left", "right", "top", "bottom"):
+                ax.spines[spine].set_visible(False)
+    axarr = axarr[::-1, :]  # Go top to bottom
+
+    return fig, axarr
 
 
 def plot_sample_eigenvalues_hist(
@@ -609,3 +704,96 @@ def plot_neighborhood(
             fontsize=FONTSIZE_TICKLABEL - 2,
         )
     return FigAxCbar(fig, ax, cbar)
+
+
+def fig_stacked_line(
+    values: dict, parameters, variables, ref_timeseries=None, ymax="free"
+):
+    """Return stacked line plot with filled areas underneath the lines
+
+    :parameter values: Dictionary of data labels (shown in the figure legend) → array of
+    data values.  These values will be plotted as filled line plots, with the first
+    dictionary entry plotted on top.  The arrays can be up to 3D with dim -1 → time
+    point, dim -2 → parameter, and dim -3 → variable.  If the array is less than 3D the
+    leading dimensions will be expanded.
+
+    :parameter parameters: List of (name, units) tuples, one per parameter.
+
+    :parameter variables: List of (name, units) tuples, one per variable.
+
+    :parameter ref_timeseries: (Optional) Array of scalars.  These values will be
+    plotted as a line plot at the top of the figure to serve as visual guide to when
+    each time point falls in the test protocol.  The array may be up to 2D, with dim -1
+    → time point and dim -2 (if present) → variable.  If the array is less than 2D the
+    leading dimensions will be expanded.
+
+    """
+    parameters = [
+        Parameter(*p) if not isinstance(p, Parameter) else p for p in parameters
+    ]
+    if ref_timeseries is not None:
+        ref_timeseries = np.atleast_2d(ref_timeseries)
+
+    colors = ["dimgray", "darkred"]
+
+    def get_color(i):
+        try:
+            return colors[i]
+        except IndexError:
+            return colors[-1]
+
+    fig, axarr = fig_blank_tsvars_by_parameter(
+        len(parameters),
+        len(variables),
+    )
+    tick_locator = mpl.ticker.MaxNLocator(integer=True)
+    ylim = np.zeros((len(parameters), len(variables)))
+    # Loop over output variables
+    for i_var, (var, var_units) in enumerate(variables):
+        if ref_timeseries is not None:
+            plot_reference_tsdata(
+                ref_timeseries[i_var], axarr[0, i_var], varname=f"{var} [{var_units}]"
+            )
+        axarr[0, i_var].xaxis.set_major_locator(tick_locator)
+        axarr[-1, i_var].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
+        # Loop over parameters
+        for i_p, p in enumerate(parameters):
+            ax = axarr[i_p + 1, i_var]
+            # Loop over sensitivity indices
+            for k, (nm, v) in enumerate(reversed(values.items())):
+                x = np.arange(v.shape[-1])
+                while v.ndim < 3:  # np.atleast_3d inconsistently places the new axis
+                    v = np.expand_dims(v, 0)
+                ax.fill_between(x, v[i_var, i_p, :], color=get_color(k), label=nm)
+            ax.xaxis.set_major_locator(tick_locator)
+            ax.set_xlim(0, max(x))
+            ylim[i_p, i_var] = ax.get_ylim()[1]
+    # Add labels to the left side
+    for i_p, p in enumerate(parameters):
+        axarr[i_p + 1, 0].set_ylabel(p.name, fontsize=FONTSIZE_AXLABEL)
+    # Add legend
+    for i_var, v in enumerate(variables):
+        axarr[1, i_var].legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.84, 0.0, 0),
+            ncol=2,
+            borderaxespad=0,
+            frameon=False,
+            fontsize=FONTSIZE_AXLABEL,
+        )
+        l, b = axarr[0, i_var].get_position().min
+        r, t = axarr[0, i_var].get_position().max
+        axarr[0, i_var].set_position(
+            (
+                l,
+                b + LABELH_MULT * FONTSIZE_FIGLABEL / 72 / fig.get_figheight(),
+                r - l,
+                t - b,
+            )
+        )
+    if ymax == "shared":
+        max_ylim = np.max(ylim, axis=0)
+        for i_p in range(len(parameters)):
+            for i_var in range(len(variables)):
+                axarr[i_p + 1, i_var].set_ylim(0, max_ylim[i_var])
+    return FigResultAxarr(fig, axarr)

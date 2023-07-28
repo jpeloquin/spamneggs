@@ -56,7 +56,11 @@ from .plot import (
     FONTSIZE_FIGLABEL,
     FONTSIZE_AXLABEL,
     FONTSIZE_TICKLABEL,
+    LABELH_MULT,
+    fig_blank_tsvars_by_parameter,
+    fig_stacked_line,
     remove_spines,
+    plot_reference_tsdata,
 )
 from .variables import *
 
@@ -66,8 +70,6 @@ from .variables import *
 NUM_WORKERS = psutil.cpu_count(logical=False)
 
 COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as zero
-
-LABELH_MULT = 1.5  # multiple of font size to use for label height
 
 
 class CaseGenerationError(Exception):
@@ -1360,23 +1362,6 @@ def get_reference_tsdata(analysis, tsdata, cases, named_cases):
     return ref_ts
 
 
-def plot_reference_tsdata(tsdata, var, ax):
-    """Plot reference timeseries data into an axes"""
-    ax.plot(tsdata["Step"], tsdata[f"{var} [var]"], color="k")
-    # Set the axes limits to the min and max of the data, to match
-    # the axes limits used for the heatmap images.
-    ax.set_xlim(min(tsdata["Step"]), max(tsdata["Step"]))
-    ax.set_title(
-        var,
-        fontsize=FONTSIZE_FIGLABEL,
-        loc="left",
-        pad=3.0,
-    )
-    ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
-    ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL, labelcolor=COLOR_DEEMPH)
-    ax.set_facecolor("#F6F6F6")
-
-
 def makefig_sensitivity_tsvar_all(
     analysis, tsvar_names, tsdata, cases, named_cases=None
 ):
@@ -1429,53 +1414,23 @@ def makefig_sensitivity_tsvar_all(
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
-    fig, axarr = fig_blank_tsvars_by_parameter(
-        len(analysis.parameters),
-        len(analysis.variables),
+    S1 = np.array([by_var[v] for by_var in S1.values() for v in by_var])
+    ST = np.array([by_var[v] for by_var in ST.values() for v in by_var])
+    indices = {"Order 1": S1, "Total": ST}
+    variables = [(v, "") for v in analysis.variables]
+    ref_values = np.array([ref_ts[f"{v} [var]"] for v in analysis.variables])
+    fr = fig_stacked_line(
+        indices, analysis.parameters, variables, ref_timeseries=ref_values
     )
-    tick_locator = mpl.ticker.MaxNLocator(integer=True)
-    ylim = np.zeros((len(analysis.parameters), len(analysis.variables)))
-    for j, var in enumerate(analysis.variables):
-        plot_reference_tsdata(ref_ts, var, axarr[0, j])
-        axarr[0, j].xaxis.set_major_locator(tick_locator)
-        axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
-        for i, p in enumerate(analysis.parameters):
-            ax = axarr[i + 1, j]
-            x = np.arange(len(S1[p][var]))
-            ax.fill_between(x, ST[p][var], color="dimgray", label="Total")
-            ax.fill_between(x, S1[p][var], color="darkred", label="1st order")
-            ax.xaxis.set_major_locator(tick_locator)
-            ax.set_xlim(0, max(x))
-            ylim[i, j] = ax.get_ylim()[1]
-    # Add labels to the left side
-    for i, p in enumerate(analysis.parameters):
-        axarr[i + 1, 0].set_ylabel(p.name, fontsize=FONTSIZE_AXLABEL)
-    # Add legend
-    for j, v in enumerate(analysis.variables):
-        axarr[1, j].legend(
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.84, 0.0, 0),
-            ncol=2,
-            borderaxespad=0,
-            frameon=False,
-            fontsize=FONTSIZE_AXLABEL,
-        )
-        l, b = axarr[0, j].get_position().min
-        r, t = axarr[0, j].get_position().max
-        axarr[0, j].set_position(
-            (
-                l,
-                b + LABELH_MULT * FONTSIZE_FIGLABEL / 72 / fig.get_figheight(),
-                r - l,
-                t - b,
-            )
-        )
-    fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=free.svg")
-    max_ylim = np.max(ylim, axis=0)
-    for i in range(len(analysis.parameters)):
-        for j in range(len(analysis.variables)):
-            axarr[i + 1, j].set_ylim(0, max_ylim[j])
-    fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=shared.svg")
+    fr.fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=free.svg")
+    fr = fig_stacked_line(
+        indices,
+        analysis.parameters,
+        variables,
+        ref_timeseries=ref_values,
+        ymax="shared",
+    )
+    fr.fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=shared.svg")
 
 
 # noinspection PyPep8Naming
@@ -1646,89 +1601,6 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
-def fig_blank_tsvars_by_parameter(
-    nparams,
-    nvars,
-    left_blankw=FONTSIZE_AXLABEL / 72,
-    right_blankw=4 / 72,
-    axw=5.0,
-    axh=0.75,
-):
-    """Return figure and axes for plotting tsvars by parameter
-
-    :param axw: width of each axes' plotting area in inches
-
-    :param axh: height of each axes' plotting area in inches
-
-    """
-    # Calculate widths of figure elements in inches.
-    fig_llabelw = LABELH_MULT * FONTSIZE_FIGLABEL / 72
-    # ^ width of parameters label on left of figure
-    ax_llabelw = LABELH_MULT * FONTSIZE_AXLABEL / 72
-    ax_hspace = LABELH_MULT * FONTSIZE_AXLABEL / 72
-    # ^ horizontal spacing between adjacent axes
-    ax_bticksh = FONTSIZE_AXLABEL / 72
-    # ^ vertical spacing between adjacent axes
-    central_areaw = ax_llabelw + (nvars * axw) + ax_hspace * (nvars - 1)
-    figw = left_blankw + fig_llabelw + central_areaw + right_blankw
-
-    # Calculate heights of figure elements
-    fig_tlabelh = LABELH_MULT * FONTSIZE_FIGLABEL / 72  # "Time series variables"
-    ax_tlabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # Variable names
-    # ^ height allocated for variable name
-    ax_blabelh = LABELH_MULT * FONTSIZE_AXLABEL / 72  # "Time Point"
-    # ^ height allocated for time axis label
-    ax_bticksh = 1.3 * LABELH_MULT * FONTSIZE_TICKLABEL / 72
-    # ^ height allocated for x-axis tick labels, per axes
-    ax_vspace = 0
-    nparams = nparams + 1
-    # ^ number of axes high; the +1 is for a time series line plot
-    central_areah = ax_blabelh + (ax_bticksh + axh) * nparams + ax_tlabelh
-    figh = central_areah + fig_tlabelh
-
-    fig = Figure(figsize=(figw, figh))
-    FigureCanvas(fig)
-
-    # Coordinates of bounding box of central area with plots
-    central_l = fig_llabelw + left_blankw
-    # ^ left coord of central plotting area; this includes parameter names and any
-    # axes-specific colorbars
-    axes_l = central_l + ax_llabelw
-    axes_b = ax_blabelh + ax_bticksh
-    # ^ bottom coord of bottom axes in plots area; this only includes the axes
-    axes_t = axes_b + (nparams - 1) * (ax_bticksh + ax_vspace) + nparams * axh
-
-    # Create the axes
-    axarr = np.full((nparams, nvars), None)
-    for i in range(nvars):
-        for j in range(nparams):
-            l = axes_l + i * (ax_hspace + axw)
-            w = axw
-            b = axes_b + j * (ax_vspace + ax_bticksh + axh)
-            h = axh
-            ax = fig.add_axes(
-                (l / figw, b / figh, w / figw, h / figh),
-            )
-            axarr[j, i] = ax
-            ax.tick_params(
-                axis="x",
-                color=COLOR_DEEMPH,
-                labelsize=FONTSIZE_TICKLABEL,
-                labelcolor=COLOR_DEEMPH,
-            )
-            ax.tick_params(
-                axis="y",
-                color=COLOR_DEEMPH,
-                labelsize=FONTSIZE_TICKLABEL,
-                labelcolor=COLOR_DEEMPH,
-            )
-            for spine in ("left", "right", "top", "bottom"):
-                ax.spines[spine].set_visible(False)
-    axarr = axarr[::-1, :]  # Go top to bottom
-
-    return fig, axarr
-
-
 def makefig_sensitivity_tsvars_heatmap(
     analysis,
     correlations,
@@ -1874,7 +1746,7 @@ def makefig_sensitivity_tsvars_heatmap(
 
     # Draw the time series line plot in the first row
     for i, var in enumerate(analysis.variables):
-        plot_reference_tsdata(ref_ts, var, axarr[0, i])
+        plot_reference_tsdata(ref_ts[f"{var} [var]"], axarr[0, j], varname=var)
         axarr[0, i].xaxis.set_major_locator(tick_locator)
 
     def plot_colorbar(im, ax):
