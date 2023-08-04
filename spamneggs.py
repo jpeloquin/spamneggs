@@ -1752,7 +1752,7 @@ def makefig_sensitivity_tsvars_heatmap(
 
     # Draw the time series line plot in the first row
     for i, var in enumerate(analysis.variables):
-        plot_reference_tsdata(ref_ts[f"{var} [var]"], axarr[0, j], varname=var)
+        plot_reference_tsdata(ref_ts[f"{var} [var]"], axarr[0, i], varname=var)
         axarr[0, i].xaxis.set_major_locator(tick_locator)
 
     def plot_colorbar(im, ax):
