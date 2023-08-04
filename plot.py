@@ -734,7 +734,7 @@ def fig_stacked_line(
     if ref_timeseries is not None:
         ref_timeseries = np.atleast_2d(ref_timeseries)
 
-    colors = ["dimgray", "darkred"]
+    colors = ["dimgray", "darkred", "royalblue", "orange"]  # last is on top
 
     def get_color(i):
         try:
