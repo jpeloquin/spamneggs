@@ -746,6 +746,7 @@ def fig_stacked_line(
         len(parameters),
         len(variables),
     )
+    fig.set_tight_layout(False)  # silence warning about tight_layout compatibility
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
     ylim = np.zeros((len(parameters), len(variables)))
     # Loop over output variables
