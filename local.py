@@ -19,7 +19,9 @@ class LsqCostFunctionFactory:
         :param callback: Function with call signature (parameter values, cost). Every
         time the returned function `ψs` is called, it will call the callback with the
         parameter values it was given and the cost it calculated. The callback is
-        usually used for logging."""
+        usually used for logging.
+
+        """
         self.f = f
         self.callback = callback
 
@@ -29,8 +31,9 @@ class LsqCostFunctionFactory:
         :param x0: Vector of "true" parameter values on length n.  The returned cost
         function will calculate cost relative to `f(x0)`.
 
-        :returns: Sum-squares cost function, which accepts a vector of parameters
-        with length matching x0.
+        :returns: Sum-squares cost function, which accepts a vector of parameters with
+        length matching x0.
+
         """
 
         f0 = self.f(x0)
