@@ -1,6 +1,7 @@
 from warnings import warn
 
 import numpy as np
+from scipy.stats import uniform
 
 
 class Scalar:
@@ -25,6 +26,10 @@ class UniformScalar(ContinuousScalar):
     def sensitivity_levels(self, n):
         levels = np.linspace(self.lb, self.ub, n)
         return levels
+
+    def sample(self):
+        r = uniform.rvs(0, 1)  # uniform on [0, 1]
+        return (1 - r) * self.lb + r * self.ub
 
 
 class CategoricalScalar(Scalar):
