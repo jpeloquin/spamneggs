@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from .numerics import eigenvalue_error_bfalt
@@ -42,7 +44,8 @@ class LsqCostFunctionFactory:
             # run_case verifies that must points are used and (via run_febio_checked)
             # that FEBio observed them, so we don't need to check for mismatched times
             f_value = self.f(x)
-            cost = np.sum((f_value - f0) ** 2)
+            se = np.atleast_1d(np.array((f_value - f0) ** 2))  # ensure iterable
+            cost = math.fsum(se)
             if self.callback is not None:
                 self.callback(x, cost)
             return cost
