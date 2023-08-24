@@ -402,7 +402,7 @@ def plot_matrix(
         if np.min(mat) <= 0:
             norm = mpl.colors.SymLogNorm(linthresh=np.min(np.abs(mat)), linscale=0.5)
         else:
-            norm = mpl.colors.LogNorm(vmin=-vextreme, vmax=vextreme)
+            norm = mpl.colors.LogNorm(vmin=np.min(mat), vmax=np.max(mat))
     else:
         raise ValueError("Scale choice '{scale}' not recognized.")
     im = ax.matshow(
