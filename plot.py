@@ -401,6 +401,9 @@ def plot_matrix(
     elif scale == "log":
         if np.min(mat) <= 0:
             norm = mpl.colors.SymLogNorm(linthresh=np.min(np.abs(mat)), linscale=0.5)
+            # Set default labels
+            if cbar_label is None:
+                cbar_label = "Symmetric log10"
         else:
             norm = mpl.colors.LogNorm(vmin=np.min(mat), vmax=np.max(mat))
     else:
@@ -438,7 +441,8 @@ def plot_matrix(
     )
     cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
     cbar = fig.colorbar(im, cax=cax, use_gridspec=True)
-    cbar.set_label(cbar_label, fontsize=FONTSIZE_AXLABEL)
+    if cbar_label is not None:
+        cbar.set_label(cbar_label, fontsize=FONTSIZE_AXLABEL)
     cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
     ax.set_title(title, fontsize=FONTSIZE_FIGLABEL)
     ax.set_xticks(

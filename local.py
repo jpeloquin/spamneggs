@@ -62,6 +62,7 @@ def plot_sample(analysis, id_label, Hs, H, Herr=None):
         tick_labels=[p.name for p in analysis.parameters],
     )
     fig.fig.savefig(dir_Hs / f"{id_label}_scaled_Hessian.svg")
+
     # Plot the Hessian matrix
     dir_H = analysis.directory / "samples_plots_Hessian"
     dir_H.mkdir(exist_ok=True)
