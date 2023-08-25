@@ -1405,7 +1405,7 @@ def makefig_sensitivity_tsvar_all(
         fig = fig_corr_eigenvectors(svd_data)
         fig.savefig(pth_svd_fig_v)
     except np.linalg.LinAlgError as e:
-        warn(f"Corroleation matrix SVD failed: {str(e)}")
+        warn(f"Correlation matrix SVD failed: {str(e)}")
         # Don't leave files from a previous run (if any); that would confuse the user
         # TODO: Old files should be cleaned up at the beginning of a run
         pth_svd_data.unlink(missing_ok=True)
