@@ -23,6 +23,13 @@ class UniformScalar(ContinuousScalar):
         self.lb = lb
         self.ub = ub
 
+    def is_valid(self, value):
+        if value < self.lb:
+            return False
+        if value > self.ub:
+            return False
+        return True
+
     def sensitivity_levels(self, n):
         levels = np.linspace(self.lb, self.ub, n)
         return levels
