@@ -40,3 +40,7 @@ def ordered_eig(A):
     idx = np.arange(len(w))
     ordered_idx = sorted(idx, key=lambda i: w[i])[::-1]
     return w[ordered_idx], v[:, ordered_idx]
+
+
+def is_parameter_colname(s):
+    return s.endswith("[param]")

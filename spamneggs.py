@@ -30,7 +30,6 @@ from sklearn.neighbors import KernelDensity
 
 # In-house packages
 import waffleiron as wfl
-from waffleiron import Model
 from waffleiron.febio import (
     FEBioError,
     CheckError,
@@ -62,14 +61,13 @@ from .plot import (
     remove_spines,
     plot_reference_tsdata,
 )
+from .stats import corr_partial, corr_pearson, corr_spearman
 from .variables import *
 
 
 # TODO: This can only be modified through spam.spamneggs.NUM_WORKERS, which is
 # nonintuitive
 NUM_WORKERS = psutil.cpu_count(logical=False)
-
-COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as zero
 
 
 class CaseGenerationError(Exception):
@@ -895,12 +893,12 @@ def tabulate(analysis: CaseGenerator):
         )
 
 
-def tab_tsvars_corrmap(analysis, tsdata, cov_zero_thresh=COV_ZERO_THRESH):
+def tab_tsvars_corrmap(analysis, tsdata, fun_corr=corr_pearson):
     """Return table of time series vs. parameter correlation vectors"""
     tsdata = tsdata.copy().reset_index().set_index("Step")
     # Calculate sensitivity vectors
     ntimes = len(tsdata.index.unique())  # number of time points
-    sensitivity_vectors = {
+    corr_vectors = {
         (p.name, v): np.zeros(ntimes)
         for p in analysis.parameters
         for v in analysis.variables
@@ -911,20 +909,9 @@ def tab_tsvars_corrmap(analysis, tsdata, cov_zero_thresh=COV_ZERO_THRESH):
     for i in range(ntimes):
         for parameter in analysis.parameters:
             for vnm in analysis.variables:
-                p = tsdata.loc[i][f"{parameter.name} [param]"]
-                v = tsdata.loc[i][f"{vnm} [var]"]
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ρ = np.corrcoef(p, v)[0, 1]
-                cov = np.cov(p, v)
-                if np.isnan(ρ) and (
-                    cov[0, 1] <= cov_zero_thresh and cov[1, 1] <= cov_zero_thresh
-                ):
-                    # Coerce correlation to zero if it is nan only because the output
-                    # variable has practically no variance
-                    sensitivity_vectors[(parameter.name, vnm)][i] = 0
-                else:
-                    sensitivity_vectors[(parameter.name, vnm)][i] = ρ
-    correlations = DataFrame(sensitivity_vectors).stack()
+                ρ = fun_corr(tsdata.loc[i], f"{parameter.name} [param]", f"{vnm} [var]")
+                corr_vectors[(parameter.name, vnm)][i] = ρ
+    correlations = DataFrame(corr_vectors).stack()
     correlations.index.set_names(["Time Point", "Variable"], inplace=True)
     correlations = correlations.melt(
         ignore_index=False, var_name="Parameter", value_name="Correlation Coefficient"
@@ -1378,39 +1365,58 @@ def makefig_sensitivity_tsvar_all(
     S1, ST = sobol_analysis_tsvars(analysis, tsdata, cases)
     makefig_sobol_tsvars(analysis, S1, ST, ref_ts)
 
-    correlations_table = tab_tsvars_corrmap(analysis, tsdata)
-    correlations_table.to_feather(analysis.directory / f"sensitivity_vectors.feather")
-    makefig_sensitivity_tsvars_heatmap(
-        analysis, correlations_table, ref_ts, norm="none"
-    )
-    makefig_sensitivity_tsvars_heatmap(analysis, correlations_table, ref_ts, norm="all")
-    makefig_sensitivity_tsvars_heatmap(
-        analysis, correlations_table, ref_ts, norm="vector"
-    )
-    makefig_sensitivity_tsvars_heatmap(
-        analysis, correlations_table, ref_ts, norm="subvector"
-    )
-    # Estimate the rank of the sensitivity vectors
-    pth_svd_data = analysis.directory / "sensitivity_ρ_stats.json"
-    pth_svd_fig_s = analysis.directory / "sensitivity_ρ_singular_values.svg"
-    pth_svd_fig_v = analysis.directory / "sensitivity_ρ_principal_axes.svg"
-    try:
-        # TODO: get the parameter order from the cluster analysis so it can be
-        #  re-used for the sensitivity vectors PCA plot
-        svd_data = corr_svd(correlations_table)
-        with open(pth_svd_data, "w") as f:
-            json.dump(svd_data, f)
-        fig = fig_corr_singular_values(svd_data)
-        fig.savefig(pth_svd_fig_s)
-        fig = fig_corr_eigenvectors(svd_data)
-        fig.savefig(pth_svd_fig_v)
-    except np.linalg.LinAlgError as e:
-        warn(f"Correlation matrix SVD failed: {str(e)}")
-        # Don't leave files from a previous run (if any); that would confuse the user
-        # TODO: Old files should be cleaned up at the beginning of a run
-        pth_svd_data.unlink(missing_ok=True)
-        pth_svd_fig_s.unlink(missing_ok=True)
-        pth_svd_fig_v.unlink(missing_ok=True)
+    # Correlation coefficients
+    for nm_corr, fun_corr in (
+        ("pearson", corr_pearson),
+        ("spearman", corr_spearman),
+        ("partial", corr_partial),
+    ):
+        correlations_table = tab_tsvars_corrmap(analysis, tsdata, fun_corr=fun_corr)
+        correlations_table.to_feather(
+            analysis.directory / f"tsvar_param_corr={nm_corr}.feather"
+        )
+        for norm in ("none", "all", "vector", "subvector"):
+            fig_heatmap, fig_distmat = plot_tsvar_param_heatmap(
+                analysis,
+                correlations_table,
+                ref_ts,
+                norm=norm,
+            )
+            fig_heatmap.savefig(
+                analysis.directory
+                / f"tsvar_param_corr={nm_corr}_heatmap_norm={norm}.svg"
+            )
+            if norm == "none":
+                fig_distmat.savefig(
+                    analysis.directory
+                    / f"tsvar_param_corr={nm_corr}_distance_matrix.svg",
+                    dpi=300,
+                )
+        # Estimate the rank of the sensitivity vectors
+        pth_svd_data = analysis.directory / f"tsvar_param_corr={nm_corr}_stats.json"
+        pth_svd_fig_s = (
+            analysis.directory / f"tsvar_param_corr={nm_corr}_singular_values.svg"
+        )
+        pth_svd_fig_v = (
+            analysis.directory / f"tsvar_param_corr={nm_corr}_principal_axes.svg"
+        )
+        try:
+            # TODO: get the parameter order from the cluster analysis so it can be
+            #  re-used for the sensitivity vectors PCA plot
+            svd_data = corr_svd(correlations_table)
+            with open(pth_svd_data, "w") as f:
+                json.dump(svd_data, f)
+            fig = fig_corr_singular_values(svd_data)
+            fig.savefig(pth_svd_fig_s)
+            fig = fig_corr_eigenvectors(svd_data)
+            fig.savefig(pth_svd_fig_v)
+        except np.linalg.LinAlgError as e:
+            warn(f"Correlation matrix SVD failed: {str(e)}")
+            # Don't leave files from a previous run (if any); that would confuse the user
+            # TODO: Old files should be cleaned up at the beginning of a run
+            pth_svd_data.unlink(missing_ok=True)
+            pth_svd_fig_s.unlink(missing_ok=True)
+            pth_svd_fig_v.unlink(missing_ok=True)
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
@@ -1607,7 +1613,7 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
         fig.savefig(dir_out / f"{stem}timeseries_var={varname}.svg")
 
 
-def makefig_sensitivity_tsvars_heatmap(
+def plot_tsvar_param_heatmap(
     analysis,
     correlations,
     ref_ts,
@@ -1862,7 +1868,7 @@ def makefig_sensitivity_tsvars_heatmap(
         fontsize=FONTSIZE_FIGLABEL,
     )
     # Write figure to disk
-    fig.savefig(analysis.directory / f"sensitivity_vector_heatmap_norm={norm}.svg")
+    fig_heatmap = fig
 
     # Plot the distance matrix.  Reorder the parameters to match the
     # sensitivity vector plot.
@@ -1950,7 +1956,8 @@ def makefig_sensitivity_tsvars_heatmap(
     pos_cbar_in[0] += Δw_in
     ax.set_position(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cax.set_position(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
-    fig.savefig(analysis.directory / f"sensitivity_vector_distance_matrix.svg", dpi=300)
+    fig_distmat = fig
+    return fig_heatmap, fig_distmat
 
 
 def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
