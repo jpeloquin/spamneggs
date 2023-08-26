@@ -949,7 +949,7 @@ def tab_tsvars_corrmap(analysis, tsdata, fun_corr=corr_pearson):
             for vnm in analysis.variables:
                 ρ = fun_corr(tsdata.loc[i], f"{parameter.name} [param]", f"{vnm} [var]")
                 corr_vectors[(parameter.name, vnm)][i] = ρ
-    correlations = DataFrame(corr_vectors).stack()
+    correlations = DataFrame(corr_vectors).stack(dropna=False)
     correlations.index.set_names(["Time Point", "Variable"], inplace=True)
     correlations = correlations.melt(
         ignore_index=False, var_name="Parameter", value_name="Correlation Coefficient"
