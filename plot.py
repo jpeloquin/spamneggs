@@ -369,7 +369,13 @@ def plot_eigenvalues_pdfs(eigenvalues):
 
 
 def plot_matrix(
-    mat, scale="linear", tick_labels=None, cbar_label=None, title=None, format_str=".2g"
+    mat,
+    scale="linear",
+    vlim=None,
+    tick_labels=None,
+    cbar_label=None,
+    title=None,
+    format_str=".2g",
 ):
     """Plot a square matrix as a heatmap with values written to each cell"""
     nv = mat.shape[0]
@@ -396,16 +402,23 @@ def plot_matrix(
     ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cmap = mpl.cm.get_cmap("cividis")
     vextreme = np.max(np.abs(mat))
+    if vlim is None:
+        vmin = -vextreme
+        vmax = vextreme
+    else:
+        vmin, vmax = vlim
     if scale == "linear":
-        norm = mpl.colors.Normalize(vmin=-vextreme, vmax=vextreme)
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
     elif scale == "log":
         if np.min(mat) <= 0:
-            norm = mpl.colors.SymLogNorm(linthresh=np.min(np.abs(mat)), linscale=0.5)
+            norm = mpl.colors.SymLogNorm(
+                linthresh=np.min(np.abs(mat)), vmin=vmin, vmax=vmax, linscale=0.5
+            )
             # Set default labels
             if cbar_label is None:
                 cbar_label = "Symmetric log10"
         else:
-            norm = mpl.colors.LogNorm(vmin=np.min(mat), vmax=np.max(mat))
+            norm = mpl.colors.LogNorm(vmin=vmin, vmax=vmax)
     else:
         raise ValueError("Scale choice '{scale}' not recognized.")
     im = ax.matshow(

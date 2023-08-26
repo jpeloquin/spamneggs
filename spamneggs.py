@@ -58,6 +58,7 @@ from .plot import (
     LABELH_MULT,
     fig_blank_tsvars_by_parameter,
     fig_stacked_line,
+    plot_matrix,
     remove_spines,
     plot_reference_tsdata,
 )
@@ -507,6 +508,43 @@ def cleanup_levels_units(
         else:
             cleaned[p.name] = v * p.units
     return cleaned
+
+
+def corrmap_distances(analysis, correlations):
+    parameter_names = [p.name for p in analysis.parameters]
+    by_parameter = (
+        correlations.set_index(["Parameter", "Variable", "Time Point"])
+        .unstack(["Variable", "Time Point"])
+        .loc[parameter_names]
+    )
+    # ^ keep same parameter order
+    arr = by_parameter.values
+    # ^ first index over parameters, second over variables and time points
+    arr_parameters = list(by_parameter.index)
+    # Compute unsigned Pearson correlation distance = 1 - | ρ | where
+    # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
+    # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
+    # undefined.  Typically, this will happen when u or v is all zeroes; in this
+    # case, the numerator is also zero.  For this application, it is reasonable
+    # to define 0/0 = 0.  Therefore, we need to check for (u − u̅) * (v - v̅) = 0
+    # and set the correlation distance for those vector pairs to 1.
+    distances = (
+        1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1)
+    ) ** 0.5
+    n = len(arr)  # number of variables
+    numerator = np.empty(len(distances))
+    numerator[:] = np.nan  # make indexing errors more obvious
+    means = np.mean(arr, axis=1)
+    for i in range(n):  # index of u
+        for j in range(i + 1, n):  # index of v
+            idx = (
+                scipy.special.comb(n, 2, exact=True)
+                - scipy.special.comb(n - i, 2, exact=True)
+                + (j - i - 1)
+            )
+            numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
+    distances[numerator == 0] = 1
+    return distances
 
 
 def _validate_opt_on_case_error(value):
@@ -1375,10 +1413,12 @@ def makefig_sensitivity_tsvar_all(
         correlations_table.to_feather(
             analysis.directory / f"tsvar_param_corr={nm_corr}.feather"
         )
+        distances = corrmap_distances(analysis, correlations_table)
         for norm in ("none", "all", "vector", "subvector"):
-            fig_heatmap, fig_distmat = plot_tsvar_param_heatmap(
+            fig_heatmap, parameter_order = plot_tsvar_param_heatmap(
                 analysis,
                 correlations_table,
+                distances,
                 ref_ts,
                 norm=norm,
             )
@@ -1387,7 +1427,10 @@ def makefig_sensitivity_tsvar_all(
                 / f"tsvar_param_corr={nm_corr}_heatmap_norm={norm}.svg"
             )
             if norm == "none":
-                fig_distmat.savefig(
+                fig_distmat = plot_tsvar_param_distmat(
+                    analysis, distances, parameter_order
+                )
+                fig_distmat.fig.savefig(
                     analysis.directory
                     / f"tsvar_param_corr={nm_corr}_distance_matrix.svg",
                     dpi=300,
@@ -1616,6 +1659,7 @@ def makefig_case_tsvars(timeseries, dir_out, casename=None):
 def plot_tsvar_param_heatmap(
     analysis,
     correlations,
+    distances,
     ref_ts,
     norm="none",
 ):
@@ -1695,39 +1739,17 @@ def plot_tsvar_param_heatmap(
     t = axarr[1, 0].get_position().max[1]
     b = axarr[-1, 0].get_position().min[1]
     dn_ax = fig.add_axes((fig_llabelw / figw, b, dendro_axw / figw, t - b))
-    by_parameter = correlations.unstack(["Variable", "Time Point"])
-    arr = by_parameter.values
-    # ^ first index over parameters, second over variables and time points
-    arr_parameters = list(by_parameter.index)
-    # Compute unsigned Pearson correlation distance = 1 - | ρ | where
-    # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
-    # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
-    # undefined.  Typically, this will happen when u or v is all zeroes; in this
-    # case, the numerator is also zero.  For this application, it is reasonable
-    # to define 0/0 = 0.  Therefore, we need to check for (u − u̅) * (v - v̅) = 0
-    # and set the correlation distance for those vector pairs to 1.
-    dist = (1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1)) ** 0.5
-    n = len(arr)  # number of variables
-    numerator = np.empty(len(dist))
-    numerator[:] = np.nan  # make indexing errors more obvious
-    means = np.mean(arr, axis=1)
-    for i in range(n):  # index of u
-        for j in range(i + 1, n):  # index of v
-            idx = (
-                scipy.special.comb(n, 2, exact=True)
-                - scipy.special.comb(n - i, 2, exact=True)
-                + (j - i - 1)
-            )
-            numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
-    dist[numerator == 0] = 1
-    # Compute the linkages (clusters), unless all the distances are NaN (e.g.,
-    # in a univariate sensitivity analysis)
-    if not np.all(np.isnan(dist)):
+    dn_ax.axis("off")
+    # Compute the linkages (clusters), unless all the distances are NaN (e.g., in a
+    # univariate sensitivity analysis)
+    if np.all(np.isnan(distances)):
         warn(
             "Correlation distance matrix is all NaNs.  This is expected if only one parameter is varying."
         )
+        ordered_parameter_idx = np.arange(len(analysis.parameters))
+    else:
         links = scipy.cluster.hierarchy.linkage(
-            dist, method="average", metric="correlation"
+            distances, method="average", metric="correlation"
         )
         dn = scipy.cluster.hierarchy.dendrogram(links, ax=dn_ax, orientation="left")
         dn_ax.invert_yaxis()  # to match origin="upper"; 1st param at top
@@ -1743,12 +1765,10 @@ def plot_tsvar_param_heatmap(
             labeltop=False,
         )
         ordered_parameter_idx = dn["leaves"]
-    else:
-        ordered_parameter_idx = np.arange(len(analysis.parameters))
-    dn_ax.axis("off")
 
     # Create common axis elements for time series variable plots
     tick_locator = mpl.ticker.MaxNLocator(integer=True)
+    cnorm = None  # if `norm` is valid, always overwritten
     if norm == "none":
         absmax = 1
         cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
@@ -1773,6 +1793,8 @@ def plot_tsvar_param_heatmap(
         return cbar
 
     # Plot heatmaps
+    by_parameter = correlations.unstack(["Variable", "Time Point"])
+    arr_parameters = list(by_parameter.index)
     for j in range(axarr.shape[1]):
         axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
     for irow, iparam in enumerate(ordered_parameter_idx):
@@ -1867,97 +1889,30 @@ def plot_tsvar_param_heatmap(
         va="top",
         fontsize=FONTSIZE_FIGLABEL,
     )
-    # Write figure to disk
-    fig_heatmap = fig
+    return fig, ordered_parameter_idx
 
-    # Plot the distance matrix.  Reorder the parameters to match the
-    # sensitivity vector plot.
-    dist = scipy.spatial.distance.squareform(dist)[ordered_parameter_idx, :][
-        :, ordered_parameter_idx
+
+def plot_tsvar_param_distmat(analysis, distances, parameter_order):
+    """Plot distance matrix of tsvar–parameter correlation vectors
+
+    :parameter parameter_order: List of indices into the analysis parameters.  The
+    parameters will be plotted in the listed order.  Usually this order is chosen to
+    match that in the cluster analysis dendrogram in `plot_tsvar_param_heatmap`.
+
+    """
+    parameter_names = [p.name for p in analysis.parameters]
+    distmat = scipy.spatial.distance.squareform(distances)[parameter_order, :][
+        :, parameter_order
     ]
-    fig = Figure()
-    FigureCanvas(fig)
-    # Set size to match number of variables
-    in_per_var = 0.8
-    pad_all = FONTSIZE_TICKLABEL / 2 / 72
-    mat_w = in_per_var * len(dist)
-    mat_h = mat_w
-    cbar_lpad = 12 / 72
-    cbar_w = 0.3
-    cbar_h = mat_h
-    cbar_rpad = (24 + FONTSIZE_AXLABEL) / 72
-    fig_w = pad_all + mat_w + cbar_lpad + cbar_w + cbar_rpad + pad_all
-    fig_h = (
-        pad_all + FONTSIZE_FIGLABEL / 72 + FONTSIZE_AXLABEL / 72 + 0.2 + mat_h + pad_all
+    fig = plot_matrix(
+        distmat,
+        vlim=(0, 1),
+        tick_labels=[parameter_names[i] for i in parameter_order],
+        cbar_label="Correlation Distance = 1 − |ρ|",
+        title="Correlation sensitivity vector distances",
+        format_str=".2f",
     )
-    fig.set_size_inches(fig_w, fig_h)
-    # Plot the matrix itself
-    pos_main_in = np.array((pad_all, pad_all, mat_w, mat_h))
-    ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
-    cmap = mpl.cm.get_cmap("cividis")
-    cnorm = mpl.colors.Normalize(vmin=0, vmax=np.max(np.abs(dist)))
-    im = ax.matshow(
-        dist,
-        cmap=cmap,
-        norm=cnorm,
-        origin="upper",
-        extent=(
-            -0.5,
-            len(analysis.parameters) - 0.5,
-            -0.5,
-            len(analysis.parameters) - 0.5,
-        ),
-    )
-    # Write the value of each cell as text
-    for (i, j), d in np.ndenumerate(np.flipud(dist)):
-        ax.text(
-            j,
-            i,
-            "{:0.2f}".format(d),
-            ha="center",
-            va="center",
-            backgroundcolor=(1, 1, 1, 0.5),
-            fontsize=FONTSIZE_TICKLABEL,
-        )
-    pos_cbar_in = np.array(
-        (
-            pad_all + mat_w + cbar_lpad,
-            pad_all,
-            cbar_w,
-            cbar_h,
-        )
-    )
-    cax = fig.add_axes(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
-    cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label("Correlation Distance = 1 − |ρ|", fontsize=FONTSIZE_AXLABEL)
-    cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
-    ax.set_title("Sensitivity vector distance matrix", fontsize=FONTSIZE_FIGLABEL)
-    ax.set_xticks(
-        [i for i in range(len(analysis.parameters))],
-    )
-    ax.set_yticks([i for i in reversed(range(len(analysis.parameters)))])
-    # ^ reversed b/c origin="upper"
-    ax.set_xticklabels([arr_parameters[i] for i in ordered_parameter_idx])
-    ax.set_yticklabels([arr_parameters[i] for i in ordered_parameter_idx])
-    ax.tick_params(axis="x", labelsize=FONTSIZE_AXLABEL, bottom=False)
-    ax.tick_params(axis="y", labelsize=FONTSIZE_AXLABEL)
-    #
-    # Resize figure to accommodate left axis tick labels
-    ## Calculate left overflow
-    bbox_px = ax.get_tightbbox(fig.canvas.get_renderer())
-    bbox_in = fig.dpi_scale_trans.inverted().transform(bbox_px)
-    Δw_in = -bbox_in[0][0]
-    ## Resize the canvas
-    fig_w = fig_w + Δw_in
-    fig.set_size_inches(fig_w, fig_h)
-    ## Re-apply the axes sizes, which will have changed because they are stored in
-    ## figure units
-    pos_main_in[0] += Δw_in
-    pos_cbar_in[0] += Δw_in
-    ax.set_position(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
-    cax.set_position(pos_cbar_in / [fig_w, fig_h, fig_w, fig_h])
-    fig_distmat = fig
-    return fig_heatmap, fig_distmat
+    return fig
 
 
 def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
