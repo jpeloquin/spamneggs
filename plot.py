@@ -162,6 +162,7 @@ def fig_blank_tsvars_by_parameter(
     figh = central_areah + fig_tlabelh
 
     fig = Figure(figsize=(figw, figh))
+    fig.set_tight_layout(False)  # silence warning about tight_layout compatibility
 
     # Coordinates of bounding box of central area with plots
     central_l = fig_llabelw + left_blankw

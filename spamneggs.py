@@ -2220,6 +2220,7 @@ def fig_corr_eigenvectors(svd_data):
     )
     # Prepare figure
     fig = Figure()
+    fig.set_tight_layout(False)  # silence warning about tight_layout compatibility
     FigureCanvas(fig)
     fig.set_size_inches(fig_w, fig_h)
     axarr = []
