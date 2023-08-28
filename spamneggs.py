@@ -520,21 +520,26 @@ def corrmap_distances(analysis, correlations):
     # ^ keep same parameter order
     arr = by_parameter.values
     # ^ first index over parameters, second over variables and time points
-    arr_parameters = list(by_parameter.index)
+
+    # Only consider non-nan values when calculating correlation distances
+    m_nonnan = ~np.any(np.isnan(arr), axis=0)
+    m_finite = ~np.any(np.isinf(arr), axis=0)
+    arr_valid = arr[:, np.logical_and(m_nonnan, m_finite)]
+
     # Compute unsigned Pearson correlation distance = 1 - | ρ | where
     # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
     # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
     # undefined.  Typically, this will happen when u or v is all zeroes; in this
-    # case, the numerator is also zero.  For this application, it is reasonable
+    # case, the numerator is also zero.  For the current application, it is reasonable
     # to define 0/0 = 0.  Therefore, we need to check for (u − u̅) * (v - v̅) = 0
     # and set the correlation distance for those vector pairs to 1.
     distances = (
-        1 - abs(scipy.spatial.distance.pdist(arr, metric="correlation") - 1)
+        1 - abs(scipy.spatial.distance.pdist(arr_valid, metric="correlation") - 1)
     ) ** 0.5
-    n = len(arr)  # number of variables
+    n = len(arr)  # number of parameters
     numerator = np.empty(len(distances))
     numerator[:] = np.nan  # make indexing errors more obvious
-    means = np.mean(arr, axis=1)
+    means = np.mean(arr_valid, axis=1)
     for i in range(n):  # index of u
         for j in range(i + 1, n):  # index of v
             idx = (
@@ -542,7 +547,7 @@ def corrmap_distances(analysis, correlations):
                 - scipy.special.comb(n - i, 2, exact=True)
                 + (j - i - 1)
             )
-            numerator[idx] = (arr[i] - means[i]) @ (arr[j] - means[j])
+            numerator[idx] = (arr_valid[i] - means[i]) @ (arr_valid[j] - means[j])
     distances[numerator == 0] = 1
     return distances
 
@@ -1802,18 +1807,16 @@ def plot_tsvar_param_heatmap(
         return cbar
 
     # Plot heatmaps
-    by_parameter = correlations.unstack(["Variable", "Time Point"])
-    arr_parameters = list(by_parameter.index)
     for j in range(axarr.shape[1]):
         axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
     for irow, iparam in enumerate(ordered_parameter_idx):
-        parameter = arr_parameters[iparam]
+        parameter = analysis.parameters[iparam].name
         if norm == "vector":
-            absmax = np.max(np.abs(correlations.loc[parameter].values))
+            absmax = np.nanmax(np.abs(correlations.loc[parameter].values))
             cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
         for ivar, var in enumerate(analysis.variables):
             if norm == "subvector":
-                absmax = np.max(np.abs(correlations.loc[parameter, var].values))
+                absmax = np.nanmax(np.abs(correlations.loc[parameter, var].values))
                 cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
             ax = axarr[irow + 1, ivar]
             # Image
@@ -2147,7 +2150,10 @@ def corr_svd(correlations_table):
     """Calculate singular values and eigenvectors of parameter sensitivities"""
     correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
     arr = correlations.unstack(["Variable", "Time Point"]).values
-    u, s, vh = np.linalg.svd(arr.T, full_matrices=False)
+    m_nonnan = ~np.any(np.isnan(arr), axis=0)
+    m_finite = ~np.any(np.isinf(arr), axis=0)
+    arr_valid = arr[:, np.logical_and(m_nonnan, m_finite)]
+    u, s, vh = np.linalg.svd(arr_valid.T, full_matrices=False)
     svd_data = {
         "singular values": s.tolist(),
         "parameters": correlations.index.levels[0].values.tolist(),

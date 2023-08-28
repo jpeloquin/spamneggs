@@ -1,3 +1,6 @@
+from math import inf
+import warnings
+
 import numpy as np
 from pandas import DataFrame
 import pingouin
@@ -5,7 +8,8 @@ import scipy.stats
 
 from spamneggs.core import is_parameter_colname
 
-COV_ZERO_THRESH = 1e-15  # Threshold at which a covariance value is treated as zero
+# Threshold at which a covariance value is treated as zero
+COV_ZERO_THRESH = np.finfo(float).eps
 
 
 def corr_partial(data: DataFrame, parameter_col, variable_col):
@@ -33,12 +37,13 @@ def corr_partial(data: DataFrame, parameter_col, variable_col):
     result = pingouin.partial_corr(
         data, x=parameter_col, y=variable_col, x_covar=other_parameters
     )
-    return result.loc["pearson", "r"]
+    r = result.loc["pearson", "r"]
+    if abs(r) == inf:
+        return np.nan
+    return r
 
 
-def corr_pearson(
-    data: DataFrame, parameter_col, variable_col, cov_zero_thresh=COV_ZERO_THRESH
-):
+def corr_pearson(data: DataFrame, parameter_col, variable_col):
     """Return Pearson product-moment correlation coeffient
 
     :parameter data: Table of parameter and variable values for one instant in time.
@@ -60,13 +65,7 @@ def corr_pearson(
     v = data[variable_col]
     with np.errstate(divide="ignore", invalid="ignore"):
         ρ = np.corrcoef(p, v)[0, 1]
-    cov = np.cov(p, v)
-    if np.isnan(ρ) and (cov[0, 1] <= cov_zero_thresh and cov[1, 1] <= cov_zero_thresh):
-        # Coerce correlation to zero if it is nan only because the output variable
-        # has practically no variance
-        return 0
-    else:
-        return ρ
+    return ρ
 
 
 def corr_spearman(data: DataFrame, parameter_col, variable_col):
@@ -83,8 +82,10 @@ def corr_spearman(data: DataFrame, parameter_col, variable_col):
     """
     p = data[parameter_col]
     v = data[variable_col]
-    try:
-        ρ, _ = scipy.stats.spearmanr(p, v, nan_policy="propagate")
-    except scipy.stats.ConstantInputWarning:
-        return 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=scipy.stats.ConstantInputWarning)
+        try:
+            ρ, _ = scipy.stats.spearmanr(p, v, nan_policy="propagate")
+        except scipy.stats.ConstantInputWarning:
+            return np.nan
     return ρ
