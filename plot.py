@@ -402,16 +402,20 @@ def plot_matrix(
     pos_main_in = np.array((WS_PAD_ALL, WS_PAD_ALL, mat_w, mat_h))
     ax = fig.add_axes(pos_main_in / [fig_w, fig_h, fig_w, fig_h])
     cmap = mpl.cm.get_cmap("cividis")
-    vextreme = np.max(np.abs(mat))
     if vlim is None:
-        vmin = -vextreme
-        vmax = vextreme
+        vmin = np.min(mat)
+        vmax = np.max(mat)
+        if vmin < 0 and vmax > 0:
+            # make symmetric
+            vextreme = max((abs(vmin), abs(vmax)))
+            vmin = -vextreme
+            vmax = vextreme
     else:
         vmin, vmax = vlim
     if scale == "linear":
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
     elif scale == "log":
-        if np.min(mat) <= 0:
+        if vmin <= 0:
             norm = mpl.colors.SymLogNorm(
                 linthresh=np.min(np.abs(mat)), vmin=vmin, vmax=vmax, linscale=0.5
             )
