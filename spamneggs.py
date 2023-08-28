@@ -1432,7 +1432,16 @@ def makefig_sensitivity_tsvar_all(
                 )
                 fig_distmat.fig.savefig(
                     analysis.directory
-                    / f"tsvar_param_corr={nm_corr}_distance_matrix.svg",
+                    / f"tsvar_param_corr={nm_corr}_distance_matrix_clustered.svg",
+                    dpi=300,
+                )
+                fig_distmat = plot_tsvar_param_distmat(
+                    analysis,
+                    distances,
+                )
+                fig_distmat.fig.savefig(
+                    analysis.directory
+                    / f"tsvar_param_corr={nm_corr}_distance_matrix_unclustered.svg",
                     dpi=300,
                 )
         # Estimate the rank of the sensitivity vectors
@@ -1892,7 +1901,7 @@ def plot_tsvar_param_heatmap(
     return fig, ordered_parameter_idx
 
 
-def plot_tsvar_param_distmat(analysis, distances, parameter_order):
+def plot_tsvar_param_distmat(analysis, distances, parameter_order=None):
     """Plot distance matrix of tsvar–parameter correlation vectors
 
     :parameter parameter_order: List of indices into the analysis parameters.  The
@@ -1900,6 +1909,8 @@ def plot_tsvar_param_distmat(analysis, distances, parameter_order):
     match that in the cluster analysis dendrogram in `plot_tsvar_param_heatmap`.
 
     """
+    if parameter_order is None:
+        parameter_order = np.arange(len(analysis.parameters))
     parameter_names = [p.name for p in analysis.parameters]
     distmat = scipy.spatial.distance.squareform(distances)[parameter_order, :][
         :, parameter_order
