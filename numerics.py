@@ -24,7 +24,7 @@ class OptimumStepError(ValueError):
 class StepSweep:
     """Step sweep with optimum step size identified as minimum Δ"""
 
-    def __init__(self, f, x, steps, rtol=0.005, atol=1e-7):
+    def __init__(self, f, x, steps):
         """Run step sweep
 
         :param f: Finite difference derivative f(x, h) where x is a parameter vector and
