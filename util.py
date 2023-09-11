@@ -16,6 +16,9 @@ class Counter:
     def __str__(self):
         return str(self.count)
 
+    def __repr__(self):
+        return f"{self.__class__}({self.count})"
+
     def increment(self):
         with self.lock:
             self.count += 1
