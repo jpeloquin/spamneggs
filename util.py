@@ -9,7 +9,7 @@ import threading
 class Counter:
     """Threadsafe counter"""
 
-    def __init__(self, i):
+    def __init__(self, i=0):
         self.count = i
         self.lock = threading.Lock()
 
