@@ -504,8 +504,9 @@ def plot_neighborhood(
     relative_extent=((-1, 1), (-1, 1)),
     limits=None,
     θ_label=None,
-    xlabel="Vector 1",
-    ylabel="Vector 2",
+    f_label="f",
+    v1_label="δ(Vector 1)",
+    v2_label="δ(Vector 2)",
 ):
     """Return plot of cost function in a 2D plane
 
@@ -629,6 +630,7 @@ def plot_neighborhood(
     ax_cbar = div.append_axes("right", size=cbar_w, pad=cbar_lpad)
     ax_cbar.tick_params("y", labelsize=FONTSIZE_TICKLABEL)
     cbar = fig.colorbar(im, cax=ax_cbar)
+    cbar.set_label(f_label)
 
     def style_lineplot_axes(ax):
         for k in ["top", "bottom", "left", "right"]:
@@ -637,25 +639,49 @@ def plot_neighborhood(
         ax.tick_params("x", labelsize=FONTSIZE_TICKLABEL)
         ax.tick_params("y", labelsize=FONTSIZE_TICKLABEL)
 
-    # Add a line plot along vector 1, crossing the origin
-    ax_l1 = div.append_axes(
-        "bottom", size=vbar_w, pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL, sharex=ax
-    )
-    style_lineplot_axes(ax_l1)
-    ax_l1.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
-    ax_l1.plot(si[0], neighborhood[:, n[0][0]], color="C0", linewidth=1)
-    ax_l1.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
-    ax_l1.tick_params("x", top=True, bottom=True)
-    ax_l1.tick_params("y")
-    # Add a line plot along vector 2, crossing the origin
-    ax_l2 = div.append_axes(
+    # Add a line plot through the origin along vector 1
+    ax_v1 = div.append_axes(
         "left", size=vbar_w, pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL, sharey=ax
     )
-    style_lineplot_axes(ax_l2)
-    ax_l2.plot(neighborhood[n[1][0], :], si[1], color="C0", linewidth=1)
-    ax_l2.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
-    ax_l2.tick_params("x", top=True, labeltop=True, bottom=False, labelbottom=False)
-    ax_l2.tick_params("y", left=True, right=True)
+    style_lineplot_axes(ax_v1)
+    ax_v1.plot(neighborhood[n[1][0], :], si[1], color="C0", linewidth=1)
+    ax_v1.xaxis.tick_top()
+    ax_v1.xaxis.set_label_position("top")
+    ax_v1.ticklabel_format(axis="both", style="sci", scilimits=(-4, 4))
+    ax_v1.tick_params("y", left=True, right=True)
+    ax_v1.xaxis.get_offset_text().set_fontsize(FONTSIZE_TICKLABEL)
+    ax_v1.yaxis.get_offset_text().set_fontsize(FONTSIZE_TICKLABEL)
+    fig.draw_without_rendering()  # https://github.com/matplotlib/matplotlib/issues/25357
+    ax_v1.xaxis.get_offset_text().set_visible(False)
+    ax_v1.yaxis.get_offset_text().set_visible(False)
+    xsc = ax_v1.xaxis.get_offset_text().get_text()
+    ysc = ax_v1.yaxis.get_offset_text().get_text()
+    xlabel = " × ".join(s for s in [f_label, xsc] if s)
+    if xlabel:
+        ax_v1.set_xlabel(xlabel, fontsize=FONTSIZE_TICKLABEL, color=COLOR_DEEMPH)
+    if ysc:
+        v1_label += f" × {ysc}"
+    ax_v1.set_ylabel(v1_label, fontsize=FONTSIZE_AXLABEL)
+    # Add a line plot through the origin along vector 2
+    ax_v2 = div.append_axes(
+        "bottom", size=vbar_w, pad=FONTSIZE_TICKLABEL / 2 / 72 + WS_PAD_ALL, sharex=ax
+    )
+    style_lineplot_axes(ax_v2)
+    ax_v2.plot(si[0], neighborhood[:, n[0][0]], color="C0", linewidth=1)
+    ax_v2.tick_params("x", top=True, labeltop=False, bottom=True, labelbottom=True)
+    ax_v2.ticklabel_format(axis="both", style="sci", scilimits=(-4, 4))
+    fig.draw_without_rendering()  # https://github.com/matplotlib/matplotlib/issues/25357
+    ax_v2.xaxis.get_offset_text().set_visible(False)
+    ax_v2.yaxis.get_offset_text().set_visible(False)
+    xsc = ax_v2.xaxis.get_offset_text().get_text()
+    ysc = ax_v2.yaxis.get_offset_text().get_text()
+    ylabel = " × ".join(s for s in [f_label, ysc] if s)
+    if ylabel:
+        ax_v2.set_ylabel(ylabel, fontsize=FONTSIZE_TICKLABEL, color=COLOR_DEEMPH)
+    if xsc:
+        v2_label += f" × {xsc}"
+    ax_v2.set_xlabel(v2_label, fontsize=FONTSIZE_AXLABEL)
+
     # Legend style constants
     cmap_vec = CMAP_DIVERGE
     norm_vec = mpl.colors.Normalize(vmin=-1, vmax=1)
