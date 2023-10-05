@@ -2083,7 +2083,7 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     if max(ranges) / min(ranges) < 10:
         # Link the y-axis across axes
         for ax in axs[1:]:
-            axs[0].get_shared_y_axes().join(axs[0], ax)
+            ax.sharey(axs[0])
     fig.suptitle(
         f"{variable} time series vs. {subject_parameter.name}",
         fontsize=FONTSIZE_FIGLABEL,

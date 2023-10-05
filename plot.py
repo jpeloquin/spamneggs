@@ -356,7 +356,7 @@ def plot_eigenvalues_pdfs(eigenvalues):
     smallest = np.min(np.abs(eigenvalues))
     for i, x in enumerate(eigenvalues[:]):
         ax = f.axarr[i, 0]
-        ax.get_shared_x_axes().join(f.axarr[0, 0], ax)
+        ax.sharex(f.axarr[0, 0])
         ax.set_xlabel(f"Eigenvalue {i + 1}", fontsize=FONTSIZE_AXLABEL)
         ax.set_xscale("symlog", linthresh=smallest)
         ax.vlines(x, ymin=-1, ymax=1, color="black")
