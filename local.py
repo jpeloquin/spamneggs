@@ -79,9 +79,9 @@ def plot_sample(analysis, id_label, Hs, H, Herr=None):
 
     # Plot the eigenvalues of the scaled Hessian matrix
     w, v = np.linalg.eig(Hs)
-    dir_H_eig = analysis.directory / "samples_plots_scaled_Hessian_eigenvalues"
-    dir_H_eig.mkdir(exist_ok=True)
     ## Histogram
+    dir_H_eig = analysis.directory / "sample_plots_scaled_Hessian_eigenvalues_hist"
+    dir_H_eig.mkdir(exist_ok=True)
     nparams = len(analysis.parameters)
     err = {"B–F auto": eigenvalue_error_bfalt(Hs, w, v)}
     if Herr is not None:
@@ -90,6 +90,8 @@ def plot_sample(analysis, id_label, Hs, H, Herr=None):
     fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
     fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues_hist.svg")
     ## Line plot
+    dir_H_eig = analysis.directory / "sample_plots_scaled_Hessian_eigenvalues_line"
+    dir_H_eig.mkdir(exist_ok=True)
     fig = plot_sample_eigenvalues_line(w, errors=err)
     fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
     fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues_line.svg")
