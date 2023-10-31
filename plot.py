@@ -40,6 +40,27 @@ FigAxCbar = namedtuple("FigResultAxarr", ["fig", "ax", "cbar"])
 FigResultAxarr = namedtuple("FigResultAxarr", ["fig", "axarr"])
 
 
+def _eigenvalue_error_styles(errors: dict):
+    """Return styles as Line2D objects for each eigenvalue error
+
+    For use with plot_sample_eigenvalues_line and plot_eigenvalues_pdfs.
+
+    """
+    legend_handles = []
+    for j, (k, error) in enumerate(errors.items()):
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color=EIGENVALUE_ERROR_COLORS[j],
+                linewidth=1,
+                linestyle=":",
+                label=k,
+            )
+        )
+    return legend_handles
+
+
 def format_number(v, digits=2):
     """Return formatted number
 
@@ -281,7 +302,7 @@ def plot_sample_eigenvalues_line(
     values,
     xlabel="Eigenvector Index",
     ylabel="Eigenvalue",
-    errors: Optional[dict] = None,
+    errors={},
 ):
     """Plot eigenvalues as horizontal lines on a log scale"""
     x = 1 + np.arange(len(values))
@@ -305,29 +326,20 @@ def plot_sample_eigenvalues_line(
         Line2D([0], [0], color="tab:blue", label="Positive", lw=1.5),
         Line2D([0], [0], color="tab:red", label="Negative", lw=1.5),
     ]
-    if errors is not None:
-        for j, (k, error) in enumerate(errors.items()):
-            if not hasattr(error, "__iter__"):
-                error = len(values) * (error,)
-            for i, e in enumerate(error):
-                ax.hlines(
-                    e,
-                    xmin=x[i] - 0.4,
-                    xmax=x[i] + 0.4,
-                    color=EIGENVALUE_ERROR_COLORS[j],
-                    linestyle=":",
-                    lw=1,
-                )
-            legend_handles += [
-                Line2D(
-                    [0],
-                    [0],
-                    color=EIGENVALUE_ERROR_COLORS[j],
-                    linewidth=1,
-                    linestyle=":",
-                    label=k,
-                )
-            ]
+    error_lines = _eigenvalue_error_styles(errors)
+    legend_handles += error_lines
+    for i, (k, v) in enumerate(errors.items()):
+        if not hasattr(v, "__iter__"):
+            v = len(values) * (v,)
+        for j in range(len(v)):
+            ax.hlines(
+                v[j],
+                xmin=x[j] - 0.4,
+                xmax=x[j] + 0.4,
+                color=error_lines[i].get_color(),
+                linestyle=":",
+                lw=1,
+            )
     ax.legend(
         handles=legend_handles, loc="upper right", fontsize=FONTSIZE_TICKLABEL, ncol=2
     )
@@ -337,7 +349,7 @@ def plot_sample_eigenvalues_line(
     return FigResult(fig, ax)
 
 
-def plot_eigenvalues_pdfs(eigenvalues):
+def plot_eigenvalues_pdfs(eigenvalues, errors={}):
     """Return figure with probability distributions of eigenvalues
 
     :param eigenvalues: Matrix of eigenvalues with shape (# of eigenvalues,
@@ -364,6 +376,24 @@ def plot_eigenvalues_pdfs(eigenvalues):
         # TODO: Can I get a Gaussian KDE plot in here?  The symlog axis makes it
         #  challenging.
         ax.set_xscale("symlog", linthresh=smallest)
+    legend_handles = _eigenvalue_error_styles(errors)
+    for i, (k, v) in enumerate(errors.items()):
+        f.axarr[0, 0].legend(
+            handles=legend_handles,
+            loc="upper left",
+            fontsize=FONTSIZE_TICKLABEL,
+            ncol=2,
+        )
+        if not hasattr(v, "__iter__"):
+            v = len(eigenvalues) * (v,)
+        for j in range(len(f.axarr)):
+            f.axarr[j, 0].vlines(
+                v[j],
+                ymin=-1,
+                ymax=1,
+                color=legend_handles[i].get_color(),
+                linestyle=":",
+            )
     return f
 
 

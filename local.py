@@ -83,9 +83,10 @@ def plot_sample(analysis, id_label, Hs, H, Herr=None):
     dir_H_eig = analysis.directory / "sample_plots_scaled_Hessian_eigenvalues_hist"
     dir_H_eig.mkdir(exist_ok=True)
     nparams = len(analysis.parameters)
-    err = {"B–F auto": eigenvalue_error_bfalt(Hs, w, v)}
+    err = {}
     if Herr is not None:
         err["ΔH"] = np.linalg.norm(np.full((nparams, nparams), 10**-2))
+    err["B–F auto"] = eigenvalue_error_bfalt(Hs, w, v)
     fig = plot_sample_eigenvalues_hist(w, "Eigenvector Index", "Eigenvalue", errors=err)
     fig.ax.set_title("Eigenvalues of Scaled Hessian", fontsize=FONTSIZE_FIGLABEL)
     fig.fig.savefig(dir_H_eig / f"{id_label}_scaled_Hessian_eigenvalues_hist.svg")
