@@ -290,10 +290,7 @@ def plot_sample_eigenvalues_line(
     ax = fig.add_subplot()
     ax.set_xlabel(xlabel, fontsize=FONTSIZE_AXLABEL)
     ax.set_ylabel(ylabel, fontsize=FONTSIZE_AXLABEL)
-    ax.set_yscale("log")
     remove_spines(ax)
-    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
-    ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=99))
     if np.any(values == 0):
         raise NotImplementedError(
             "No support yet for plotting zero eigenvalues, which shouldn't exist anyway."
@@ -303,8 +300,7 @@ def plot_sample_eigenvalues_line(
             color = "tab:red"
         else:
             color = "tab:blue"
-        c = 0.5 + i
-        ax.hlines(abs(v), xmin=c - 0.4, xmax=c + 0.4, color=color, lw=1.5)
+        ax.hlines(abs(v), xmin=x[i] - 0.4, xmax=x[i] + 0.4, color=color, lw=1.5)
     legend_handles = [
         Line2D([0], [0], color="tab:blue", label="Positive", lw=1.5),
         Line2D([0], [0], color="tab:red", label="Negative", lw=1.5),
@@ -314,11 +310,10 @@ def plot_sample_eigenvalues_line(
             if not hasattr(error, "__iter__"):
                 error = len(values) * (error,)
             for i, e in enumerate(error):
-                c = 0.5 + i
                 ax.hlines(
                     e,
-                    xmin=c - 0.4,
-                    xmax=c + 0.4,
+                    xmin=x[i] - 0.4,
+                    xmax=x[i] + 0.4,
                     color=EIGENVALUE_ERROR_COLORS[j],
                     linestyle=":",
                     lw=1,
@@ -336,6 +331,9 @@ def plot_sample_eigenvalues_line(
     ax.legend(
         handles=legend_handles, loc="upper right", fontsize=FONTSIZE_TICKLABEL, ncol=2
     )
+    ax.set_yscale("log")
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(x))
+    ax.yaxis.set_major_locator(mpl.ticker.LogLocator(numticks=99))
     return FigResult(fig, ax)
 
 
@@ -358,7 +356,6 @@ def plot_eigenvalues_pdfs(eigenvalues):
         ax = f.axarr[i, 0]
         ax.sharex(f.axarr[0, 0])
         ax.set_xlabel(f"Eigenvalue {i + 1}", fontsize=FONTSIZE_AXLABEL)
-        ax.set_xscale("symlog", linthresh=smallest)
         ax.vlines(x, ymin=-1, ymax=1, color="black")
         ax.set_ylim((-1, 1))
         ax.yaxis.set_major_locator(mpl.ticker.NullLocator())
@@ -366,6 +363,7 @@ def plot_eigenvalues_pdfs(eigenvalues):
             ax.spines[k].set_visible(False)
         # TODO: Can I get a Gaussian KDE plot in here?  The symlog axis makes it
         #  challenging.
+        ax.set_xscale("symlog", linthresh=smallest)
     return f
 
 
