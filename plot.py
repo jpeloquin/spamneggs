@@ -406,7 +406,11 @@ def plot_matrix(
     title=None,
     format_str=".2g",
 ):
-    """Plot a square matrix as a heatmap with values written to each cell"""
+    """Plot a square matrix as a heatmap with values written to each cell
+
+    :param vlim: Colorbar limits.
+
+    """
     nv = mat.shape[0]
     fig = Figure()
     fig.set_tight_layout(False)  # silence warning about tight_layout compatibility

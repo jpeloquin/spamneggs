@@ -526,16 +526,13 @@ def corrmap_distances(analysis, correlations):
     m_finite = ~np.any(np.isinf(arr), axis=0)
     arr_valid = arr[:, np.logical_and(m_nonnan, m_finite)]
 
-    # Compute unsigned Pearson correlation distance = 1 - | ρ | where
-    # ρ = (u − u̅) * (v - v̅) / ( 2-norm(u − u̅) * 2-norm(v - v̅) ).
-    # If the 2-norm of (u − u̅) or (v − v̅) is zero, then the result will be
-    # undefined.  Typically, this will happen when u or v is all zeroes; in this
-    # case, the numerator is also zero.  For the current application, it is reasonable
-    # to define 0/0 = 0.  Therefore, we need to check for (u − u̅) * (v - v̅) = 0
-    # and set the correlation distance for those vector pairs to 1.
-    distances = (
-        1 - abs(scipy.spatial.distance.pdist(arr_valid, metric="correlation") - 1)
-    ) ** 0.5
+    # Compute unsigned cosine correlation distance = 1 - | ρ | ∈ [0, 1] where ρ = u *
+    # v / ( 2-norm(u) * 2-norm(v) ). If the 2-norm of u or v is zero, then the result
+    # will be undefined.  Typically, this will happen when u or v is all zeroes; in
+    # this case, the numerator is also zero.  For the current application,
+    # it is reasonable to define 0/0 = 0.  Therefore, we need to check for u * v = 0
+    # and set the distance for those vector pairs to 1.
+    distances = 1 - abs(scipy.spatial.distance.pdist(arr_valid, metric="cosine") - 1)
     n = len(arr)  # number of parameters
     numerator = np.empty(len(distances))
     numerator[:] = np.nan  # make indexing errors more obvious
@@ -1920,9 +1917,8 @@ def plot_tsvar_param_distmat(analysis, distances, parameter_order=None):
     ]
     fig = plot_matrix(
         distmat,
-        vlim=(0, 1),
         tick_labels=[parameter_names[i] for i in parameter_order],
-        cbar_label="Correlation Distance = 1 − |ρ|",
+        cbar_label="Unsigned Cosine Distance",
         title="Correlation sensitivity vector distances",
         format_str=".2f",
     )
