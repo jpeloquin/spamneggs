@@ -338,7 +338,7 @@ class Case:
 class CaseGenerator:
     def __init__(
         self,
-        model,
+        fun: Callable[[Case], etree],
         parameters: Sequence[Union[Parameter, Tuple[str, Union[str, None]]]],
         variables: dict,
         name,
@@ -346,6 +346,8 @@ class CaseGenerator:
         checks: Sequence[Callable] = tuple(),
     ):
         """Return a CaseGenerator object
+
+        :param fun: Function that accepts a Case object and returns an FEBio XML tree.
 
         :param name: Name of the case generator.  Used as the name of the directory that
         will contain all generated files.
@@ -359,7 +361,7 @@ class CaseGenerator:
         output.
 
         """
-        self.model = model
+        self.fun = fun
         self.parameters: Sequence[Parameter] = [
             p if isinstance(p, Parameter) else Parameter(*p) for p in parameters
         ]
@@ -390,7 +392,7 @@ class CaseGenerator:
             directory,
             checks=self.checks,
         )
-        tree = self.model(case)
+        tree = self.fun(case)
         with open(case.feb_file, "wb") as f:
             wfl.output.write_xml(tree, f)
         return case
