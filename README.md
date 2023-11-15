@@ -71,8 +71,8 @@ def gen_model(case, basefile="Sophia_models/bov_ch_medmen-r_02_-_biphasicSR.feb"
 def main(nlevels):
     variables = {
         "Fx": XpltDataSelector.from_expr("node[1220].domain[0].'reaction forces'[1]"), }
-    analysis = spam.CaseGenerator(gen_model, PARAMETERS, variables,
-                                  name=f"readme_example_n={nlevels}", )
+    analysis = spam.SimGenerator(gen_model, PARAMETERS, variables,
+                                 name=f"readme_example_n={nlevels}", )
     spam.run_sensitivity(analysis, nlevels, on_case_error="ignore")
 
 

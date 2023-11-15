@@ -1,3 +1,5 @@
+import os
+from enum import Enum
 from functools import cached_property, partial
 import json
 import math
@@ -9,21 +11,24 @@ from copy import deepcopy
 from itertools import product
 from numbers import Number
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
+
+import numpy as np
 
 # Third-party packages
 import scipy.cluster
 from lxml import etree
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from lxml.etree import ElementTree
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.cm import ScalarMappable
 from matplotlib.figure import Figure
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Bbox
 import pandas as pd
-from pandas import CategoricalDtype, DataFrame
-from pathos.pools import ProcessPool
+from pandas import CategoricalDtype, DataFrame, IndexSlice
+from pathos.pools import ThreadPool
 from pint import Quantity
 import psutil
 from sklearn.neighbors import KernelDensity
@@ -66,9 +71,20 @@ from .stats import corr_partial, corr_pearson, corr_spearman
 from .variables import *
 
 
-# TODO: This can only be modified through spam.spamneggs.NUM_WORKERS, which is
-# nonintuitive
-NUM_WORKERS = psutil.cpu_count(logical=False)
+NUM_WORKERS_DEFAULT = psutil.cpu_count(logical=False)
+
+
+class OnSimError(Enum):
+    """Action when processing a simulation returns an error
+
+    Typical examples of processing are (1) generating a simulation's file and (2)
+    running a simulation.
+
+    """
+
+    STOP = 1
+    HOLD = 2
+    CONTINUE = 3
 
 
 class CaseGenerationError(Exception):
@@ -78,7 +94,7 @@ class CaseGenerationError(Exception):
 
 
 class UnconstrainedTimesError(Exception):
-    """Raise when simulation is likely to return values at random times"""
+    """Raise when simulation does not fully define its output time points"""
 
     pass
 
@@ -106,112 +122,226 @@ class Success:
 SUCCESS = Success()
 
 
+class EmptySelectionError(Exception):
+    """Raise when a selection from a DataFrame would be empty
+
+    Seems more reliable than returning None.  It would be better to return a zero-row
+    DataFrame but pandas makes that surprisingly hard.  I haven't figured out to add
+    an index to an empty DataFrame.
+
+    """
+
+    pass
+
+
 class Analysis:
     """Class storing analysis details for use after case generation"""
 
     # TODO: Write JSON or XML serialization
-    def __init__(self, generator, mkdir=True):
-        self.name = generator.name
-        # Directory containing generated_cases, case_output, etc.
-        self.base_directory = generator.directory
+    def __init__(
+        self,
+        name,
+        parameters,
+        generators: Union["SimGenerator", Iterable["SimGenerator"]],
+        parentdir: Optional[Union[Path, str]] = None,
+        mkdir=True,
+    ):
+        """Return Analysis object
+
+        :generators: Simulation generators, which turn samples into concrete
+        simulations.
+
+        """
+        self.name = name
+        self.parameters = _init_parameters(parameters)
+        if isinstance(generators, SimGenerator):
+            self.generators = [generators]
+        else:
+            self.generators = generators
+        if parentdir is None:
+            parentdir = Path(os.getcwd())
+        else:
+            parentdir = Path(parentdir)
         # Directory in which to write files from this analysis
-        self.directory = generator.directory
+        self.directory = parentdir / name
         if mkdir:
             self.directory.mkdir(exist_ok=True)
-        self.parameters = generator.parameters
-        self.variables = generator.variables
+        for g in self.generators:
+            if g.directory is None:
+                dir_ = g.set_parentdir(self.directory / "sims" / g.name)
+                if mkdir:
+                    dir_.mkdir(exist_ok=True, parents=True)
+        # Assemble list of variables from all case generators.  Variables are not shared
+        # across generators.
+        self.variables = {}
+        for g in self.generators:
+            if not self.parameters == g.parameters:
+                raise ValueError(
+                    f"SimGenerator '{g.name}' has parameters that are inconsistent with this analysis."
+                )
+            for vname, v in g.variables.items():
+                if vname in self.variables:
+                    raise ValueError(
+                        f"{vname} is defined twice.  Second instance was encountered in generator '{g.name}'."
+                    )
+                # TODO: Create a data type to store a variable definition (units,
+                # temporality), but not its implementation, which should remain on the
+                # SimGenerator and Sim objects.
+                self.variables[vname] = (g.name, v.temporality)
+
+    def complete_samples(self):
+        """Return sample IDs for which all sims were successful"""
+        good_sims = self.sims_table[self.sims_table["Status"] == "Run: Success"]
+        n = good_sims.groupby(["Group", "Sample"]).size().rename("Size").reset_index()
+        good_samples = n[n["Size"] == len(self.generators)].set_index("Group")
+        return {g: tab["Sample"].values for g, tab in good_samples.groupby("Group")}
 
     @cached_property
-    def table_named_cases(self):
-        pth_cases = self.base_directory / f"named_cases.csv"
-        named_cases = pd.read_csv(pth_cases, index_col=0)
-        return named_cases
+    def sample_ids(self):
+        return self.sims_table.index.unique("Sample")
 
     @cached_property
-    def table_auto_cases(self):
-        pth_cases = self.base_directory / f"generated_cases.csv"
-        cases = pd.read_csv(pth_cases, index_col=0)
-        return cases
+    def samples_table(self, group=None):
+        """Return table of samples"""
+        if group is None:
+            group = slice(None)
+        samples = self.sims_table.loc[IndexSlice[group, self.generators[0].name, :]]
+        samples = samples.rename(
+            {p.name: f"{p.name} [param]" for p in self.parameters}, axis=1
+        )
+        return samples
 
-    def case_data(self, case_id):
-        """Read variables from a single case analysis
+    @cached_property
+    def sims_table(self):
+        """Return table of simulations"""
+        return pd.read_csv(
+            self.directory / "simulations.csv", index_col=None
+        ).set_index(["Group", "Generator", "Sample"])
+
+    def named_sims_table(self, sample_ids=None):
+        if sample_ids is None:
+            sample_ids = slice(None)
+        if "named" in self.sims_table.index.unique("Group"):
+            return self.sims_table.loc[("named", slice(None), sample_ids), :].droplevel(
+                "Group"
+            )
+        else:
+            return None
+
+    def sampled_sims_table(self, sample_ids=None):
+        if sample_ids is None:
+            sample_ids = slice(None)
+        if "sampled" in self.sims_table.index.unique("Group"):
+            return self.sims_table.loc[
+                ("sampled", slice(None), sample_ids), :
+            ].droplevel("Group")
+        else:
+            return None
+
+    @property
+    def instantaneous_variables(self):
+        return [v for v, (g, temp) in self.variables.items() if temp == "instantaneous"]
+
+    @property
+    def timeseries_variables(self):
+        return [v for v, (g, temp) in self.variables.items() if temp == "time series"]
+
+    def sim_data(self, generator, sample_id):
+        """Read variables from a single simulation
 
         Named cases have string IDs; automatically generated cases have integer IDs.
 
         """
-        if isinstance(case_id, str):
-            row = self.table_named_cases.loc[case_id]
-        elif isinstance(case_id, int):
-            row = self.table_auto_cases.loc[case_id]
+        # As of 2023-11-17, sim_data() was only used to access data for named samples.
+        if isinstance(sample_id, str):
+            row = self.named_sims_table().loc[generator, sample_id]
+        elif isinstance(sample_id, int):
+            row = self.sampled_sims_table().loc[generator, sample_id]
         else:
-            raise TypeError(f"Case ID must be string or integer.  Was {type(case_id)}.")
-        # TODO: Unify tables for automatic and named cases
-        if row["status"] != "Run: Success":
-            raise ValueError(
-                f"No data available for case {case_id} with status {row['status']}."
+            raise TypeError(
+                f"Sim ID must be string or integer.  Was {type(sample_id)}."
             )
-        pth_record = self.base_directory / "case_output" / f"{case_id}_vars.json"
+        if row["Status"] != "Run: Success":
+            raise ValueError(f"Simulation {sample_id} has status {row['Status']}.")
+        pth_record = self.directory / "output" / generator / f"{sample_id}_vars.json"
         pth_timeseries = (
-            self.base_directory / "case_output" / f"{case_id}_timeseries_vars.csv"
+            self.directory / "output" / generator / f"{sample_id}_timeseries_vars.csv"
         )
         with open(pth_record, "r") as f:
             record = json.load(f)
         timeseries = pd.read_csv(pth_timeseries, index_col=False)
         return record, timeseries
 
-    def cases_tsdata(self, cases=None):
-        """Return table of time series data for multiple succussfully-run cases
+    def samples_tsdata(self, generator: str, group, samples=None):
+        """Return table of a generator's time series data for all samples
 
-        :param cases: Optional DataFrame of cases.  If `cases` is provided,
-        `cases_tsdata` will return time series data for the cases tabulated therein.  By
-        default, `cases_tsdata` will return time series data for all cases in
-        `self.table_auto_cases`.
+        `samples_tsdata` combines variables from all of a sample's simulations.
 
-        The time series tables for the individual cases must have already been written
-        to disk.
+        :param generator: Generator name for which to return data.
+
+        :param group: Group to select samples from.  Required because sample IDs may not
+        be unique across groups, and even if they are they may have different types and
+        combining them in one pandas DataFrame will cause type coercion.
+
+        :param samples: Optional sequence of sample IDs.  Only data from the listed
+        samples will be returned.  Samples with unsuccessful simulations will still
+        be dropped as usual though.  If `samples` is None `samples_tsdata` will
+        return time series data for all successful simulations.
+
+        The time series table for each simulation needs to already be on disk,
+        hence the restriction to use only successful simulations.
 
         """
-        if cases is None:
-            cases = self.table_auto_cases
-            cases = cases[cases["status"] == f"Run: {SUCCESS}"]
-        # TODO: It would be beneficial to build up the whole-analysis time
-        # series table at the same time as case time series tables are
-        # written to disk, instead of re-reading everything from disk.
-        tsdata = DataFrame()
-        for i in cases.index:
-            # It's tempting to store NaN values for cases with incomplete simulations,
-            # but then we'd need to choose the time points at which to store those NaN
-            # values, which is somewhat complicated.
-            pth_tsvars = (
-                self.base_directory / "case_output" / f"{i}_timeseries_vars.csv"
+        # TODO: It would be beneficial to build up the whole-analysis time series
+        #  table at the same time as case time series tables are written to disk,
+        #  instead of re-reading everything from disk.  That would also allow the
+        #  variables to be accessed individually on demand, which would simplify the
+        #  analysis code.
+        if group not in self.sims_table.index.unique("Group"):
+            raise EmptySelectionError(f"No simulations available from group {group}.")
+        sims = self.sims_table.loc[IndexSlice[group, generator]]
+        if samples is None:
+            samples = sims.index.get_level_values("Sample")[
+                sims["Status"] == "Run: Success"
+            ]
+        if len(samples) == 0:
+            raise EmptySelectionError(
+                f"With the given inputs, there are no valid simulations available from group {group}."
             )
-            tsvars = pd.read_csv(pth_tsvars)
-            # Check for missing variables in the on-disk data
-            available_vars = set(tsvars.columns)
-            missing_vars = set(self.variables) - available_vars
-            if missing_vars:
-                raise ValueError(
-                    f"Did not find variable(s) {', '.join(missing_vars)} in file: {pth_tsvars}"
-                )
-            # Extra variables in the data on disk is ok, as one batch of simulations can
-            # support multiple analyses using different variables.  But there is no need
-            # to collect variables that this analysis did not ask for.
-            case_data = {"Case": i, "Step": tsvars["Step"], "Time": tsvars["Time"]}
-            case_data.update(
-                {f"{p.name} [param]": cases.loc[i, p.name] for p in self.parameters}
+        all_vars = DataFrame()
+        for sample in samples:
+            # It's tempting to (optionally) store NaN values for incomplete simulations
+            data = pd.read_csv(
+                self.directory / "output" / generator / f"{sample}_timeseries_vars.csv"
             )
-            case_data.update({f"{v} [var]": tsvars[v] for v in self.variables})
-            case_data = DataFrame(case_data)
-            tsdata = pd.concat([tsdata, case_data])
-        return tsdata
+            # TODO: Different generators can have different time series
+            sample_data = {
+                "Sample": sample,
+                "Step": data["Step"],
+                "Time": data["Time"],
+            }
+            for v, (g, _) in self.variables.items():
+                if g == generator:
+                    sample_data[v] = data[v].values
+            sample_data = DataFrame.from_dict(sample_data)
+            all_vars = pd.concat([all_vars, sample_data])
+        varnames = set(all_vars.columns) - {"Sample", "Step", "Time"}
+        tsdata_by_var = {var: TSVarData(var, all_vars) for var in varnames}
+        return tsdata_by_var
 
-    def update_table_auto_cases(self, table):
-        """Write modified cases table to analysis directory"""
-        pth_cases = self.base_directory / f"generated_cases.csv"
-        table.reset_index().to_csv(pth_cases, index=False)
+    def write_sims_table(self, table):
+        """Write simulations table to analysis directory
+
+        File paths are written relative to the analysis directory.
+
+        """
+        table = table.copy().reset_index()  # table might be re-used elsewhere
+        pth = self.directory / "simulations.csv"
+        table["Path"] = [str(p.relative_to(pth.parent)) for p in table["Path"]]
+        table.to_csv(pth, index=False)
 
 
-class Case:
+class Sim:
     def __init__(
         self,
         name: str,
@@ -223,11 +353,10 @@ class Case:
         directory: Union[str, Path],
         checks: Iterable[Callable] = tuple(),
     ):
-        """Return Case object
+        """Return an object for access to simulation files and data
 
-        :param name:  Name of the case.  The simulation file should be "{name}.feb",
-        and any dependency simulations should be in a companion directory with this
-        name.
+        :param name: Name of the case.  The simulation file should be "{name}.feb", and
+        any dependency simulations should be in a companion directory with this name.
 
         :param parameter_values: Parameter values corresponding to this case.  If the
         values are Quantity objects, they will be checked for compatibility with the
@@ -259,12 +388,10 @@ class Case:
         self.checks = checks
         self.name = name
         self.directory = Path(directory)
-        if not self.directory.exists():
-            raise ValueError(f"Directory does not exist: {self.directory}")
 
     def __repr__(self):
         return (
-            f"Case(name={self.name},"
+            f"{self.__class__.__name__}(name={self.name},"
             f"parameters={self.parameter_list}"
             f"parameter_values={self.parameters_q},"
             f"variables={self.variables_list},"
@@ -273,19 +400,19 @@ class Case:
         )
 
     def __str__(self):
-        return f"Case {self.name}"
+        return f"Sim {self.name}"
 
     @property
     def feb_file(self):
-        return self.directory / f"case={self.name}.feb"
+        return self.directory / f"{self.name}.feb"
 
     @property
     def log_file(self):
-        return self.directory / f"case={self.name}.log"
+        return self.directory / f"{self.name}.log"
 
     @property
     def xplt_file(self):
-        return self.directory / f"case={self.name}.xplt"
+        return self.directory / f"{self.name}.xplt"
 
     def run(self, raise_on_check_fail=True):
         """Run the case's simulation and its checks
@@ -322,7 +449,7 @@ class Case:
         if check_failures:
             if raise_on_check_fail:
                 raise CheckError(
-                    f"Case {self.name} has failed checks: {', '.join([str(e) for e in check_failures])}"
+                    f"Sim {self.name} has failed checks: {', '.join([str(e) for e in check_failures])}"
                 )
             return check_failures
         return SUCCESS
@@ -331,71 +458,48 @@ class Case:
         """Return waffleiron Model object with solution"""
         model = wfl.load_model(self.feb_file)
         if model.solution is None:
-            raise ValueError(f"Case {self.name}: Model has no solution")
+            raise ValueError(f"Sim {self.name}: Model has no solution")
         return model
 
 
-class CaseGenerator:
+class SimGenerator:
     def __init__(
         self,
-        fun: Callable[[Case], etree],
+        fun: Callable[[Sim], ElementTree],
         parameters: Sequence[Union[Parameter, Tuple[str, Union[str, None]]]],
         variables: dict,
         name,
-        parentdir=None,
         checks: Sequence[Callable] = tuple(),
+        parentdir: Optional[Path] = None,
     ):
-        """Return a CaseGenerator object
+        """Return a SimGenerator object
 
         :param fun: Function that accepts a Case object and returns an FEBio XML tree.
 
         :param name: Name of the case generator.  Used as the name of the directory that
         will contain all generated files.
 
-        :param parentdir: The parent directory for the generator directory.  Defaults to the
-        current working directory.
-
         :param checks: Sequence of callables that take a waffleiron Model as their lone
         argument and should raise an exception if the check fails, or return None if the
         check succeeds.  This is meant for user-defined verification of simulation
         output.
 
+        :param parentdir: The parent directory for the generator directory.  If the
+        SimGenerator will be used with an Analysis, you do not need to set this
+        unless you want to send the generated files elsewhere.  If the SimGenerator
+        is used outside an Analysis and `parentdir` is None, simulation files will be
+        written to the current working directory.
+
         """
         self.fun = fun
-        self.parameters: Sequence[Parameter] = [
-            p if isinstance(p, Parameter) else Parameter(*p) for p in parameters
-        ]
+        self.parameters = _init_parameters(parameters)
         self.variables: dict = variables
         self.checks = checks
         self.name = name
-        if parentdir is None:
-            self.directory = Path(name).absolute() / self.name
-        else:
+        if parentdir is not None:
             self.directory = Path(parentdir).absolute() / self.name
-        if not self.directory.exists():
-            self.directory.mkdir()
-
-    def generate_case(self, name, parameter_values, sub_dir=None) -> Case:
-        """Return a Case and create its backing files"""
-        if sub_dir is None:
-            directory = self.directory
         else:
-            directory = self.directory / sub_dir
-            # self.directory should already exist
-            if not directory.exists():
-                directory.mkdir()
-        case = Case(
-            name,
-            self.parameters,
-            parameter_values,
-            self.variables,
-            directory,
-            checks=self.checks,
-        )
-        tree = self.fun(case)
-        with open(case.feb_file, "wb") as f:
-            wfl.output.write_xml(tree, f)
-        return case
+            self.directory = None
 
     @classmethod
     def from_xml(cls, pth):
@@ -429,6 +533,33 @@ class CaseGenerator:
         model = FEBioXMLModel(xml, parameter_locations)
         return cls(model, parameters, variables, name, analysis_dir)
 
+    def define_sim(self, name, parameter_values, directory=None) -> Sim:
+        """Return a Sim object without generating backing files"""
+        if directory is None:
+            # self.directory should already exist, created by whomever instantiated
+            # the SimGenerator
+            directory = self.directory
+        sim = Sim(
+            name,
+            self.parameters,
+            parameter_values,
+            self.variables,
+            directory,
+            checks=self.checks,
+        )
+        return sim
+
+    def generate_sim(self, sim):
+        """Generate backing files for a simulation"""
+        sim.directory.mkdir(exist_ok=True)
+        tree = self.fun(sim)
+        with open(sim.feb_file, "wb") as f:
+            wfl.output.write_xml(tree, f)
+
+    def set_parentdir(self, dir_):
+        self.directory = Path(dir_)
+        return self.directory
+
 
 class FEBioXMLModel:
     """A model defined by an FEBio XML tree
@@ -457,7 +588,7 @@ class FEBioXMLModel:
         self.xml = xml
         self.parameters = parameters
 
-    def __call__(self, case: Case):
+    def __call__(self, case: Sim):
         # Rehydrate the XML
         tree = etree.fromstring(self.xml).getroottree()
         # Alter the model parameters to match the current case
@@ -471,28 +602,97 @@ class FEBioXMLModel:
         # this case.
         logfile_reqs, plotfile_reqs = fx.required_outputs(case.variables_list)
         fx.insert_output_elem(
-            tree, logfile_reqs, plotfile_reqs, file_stem=f"case={case.name}"
+            tree, logfile_reqs, plotfile_reqs, file_stem=f"{case.name}"
         )
         return tree
 
 
-def _trap_err(fun):
-    """Wrap case-processing function to catch and return any errors"""
+class TSVarData:
+    """Store timeseries variable values across all samples"""
 
-    def wrapped(args):
-        name, case = args
-        try:
-            return fun(args)
-        except (FEBioError, CheckError) as err:
-            print(f"Case {name}:\n")
-            traceback.print_exc()
-            print()
-            # PROBLEM: If this is being used for case generation, the input "case"
-            # object is probably a dictionary of parameter values rather than a case
-            # object, so we have an inconsistent return type.
-            return case, err
+    # pandas.Series would work if it wasn't necessary to store the time vector
 
-    return wrapped
+    def __init__(self, var: str, data: DataFrame):
+        """Return TSVarData object
+
+        :param var: Variable name.
+
+        :param data: DataFrame with at least the following four columns: Sample,
+        Step, Time, and the variable's name.
+
+        """
+        self.variable = var
+        self.data = (
+            data[["Sample", "Step", "Time", var]].copy().set_index(["Sample", "Step"])
+        )
+        self.samples = sorted(self.data.index.unique("Sample").values)
+        self.steps = sorted(self.data.index.unique("Step").values)
+        self.time = sorted(pd.unique(self.data["Time"]))
+        if np.any(pd.isnull(self.steps)):
+            raise ValueError("Some steps are null/NA.")
+        if np.any(pd.isnull(self.time)):
+            raise ValueError("Some times are null/NA.")
+        if not len(self.steps) == len(self.time):
+            raise ValueError(
+                "Number of unique time points does not match the number of steps."
+            )
+
+    def __str__(self):
+        return f"TSVarData('{self.variable}')"
+
+    def values(self, sample_id=None):
+        if sample_id is None:
+            return self.data[self.variable]
+        else:
+            return self.data.loc[sample_id][self.variable]
+
+
+def _default_sample_ids(analysis):
+    sample_ids = {"sampled": [], "named": []}
+    for g, ids in analysis.complete_samples().items():
+        sample_ids[g] = ids
+    if len(sample_ids["sampled"]) == 0:
+        raise ValueError(
+            "No sample IDs to process.  If sample_ids=None was provided, this means there are no samples for which every simulation was successful."
+        )
+    return sample_ids
+
+
+def _merge_tsdata_params(analysis, tstable):
+    """Merge parameter values into time series variable table"""
+    data = pd.merge(
+        tstable.rename(
+            {v: f"{v} [var]" for v in analysis.variables}, axis=1
+        ).reset_index("Step"),
+        analysis.samples_table.drop(["Status", "Path"], axis=1),
+        on="Sample",
+    )
+    return data
+
+
+def _update_table_status(table: DataFrame, output, step=None):
+    """Transfer sim status from do_parallel to a sims table"""
+    if step is not None:
+        prefix = f"{step}: "
+    else:
+        prefix = ""
+    for (group, generator, ix), err in output:
+        if err == SUCCESS:
+            msg = f"{prefix}{err}"
+        else:
+            # The error might be a list of errors if it came from the custom
+            # simulation checks.
+            try:
+                errors = iter(err)
+            except TypeError:
+                errors = [err]
+            msg = f"{prefix}{', '.join(e.__class__.__name__ for e in errors)}"
+        table.loc[(group, generator, ix), "Status"] = msg
+
+
+def _init_parameters(parameters):
+    """Return tuple of Parameter objects"""
+    return tuple(p if isinstance(p, Parameter) else Parameter(*p) for p in parameters)
 
 
 def cleanup_levels_units(
@@ -551,16 +751,13 @@ def corrmap_distances(analysis, correlations):
     return distances
 
 
-def _validate_opt_on_case_error(value):
-    # Validate input
-    on_case_error_options = ("stop", "hold", "ignore")
-    if not value in on_case_error_options:
-        raise ValueError(
-            f"on_case_error = {value}; allowed values are {','.join(on_case_error_options)}"
-        )
+def sims_table(analysis: Analysis, sims):
+    """Return table of Analysis Sims
 
+    :param analysis: Analysis object
+    :param sims: Iterable of (tag, Sim) tuples.
 
-def cases_table(case_generator, parallel_output, step="Generate"):
+    """
     # TODO: Figure out same way to demarcate parameters from other
     # metadata so there are no reserved parameter names.  For example, a
     # user should be able to name their parameter "path" without
@@ -568,83 +765,83 @@ def cases_table(case_generator, parallel_output, step="Generate"):
     #
     # Create column names.  Do this explicitly so if there is no output to process we
     # still get a valid (empty) table.
-    data = {"ID": []}
-    for p in case_generator.parameters:
+    data = {"Group": [], "Generator": [], "Sample": []}
+    for p in analysis.parameters:
         data[p.name] = []
-    data["status"] = []
-    data["path"] = []
-    # For each case's output, add a row
-    for nm, output in parallel_output.items():
-        case = output["Case"]
-        # ID
-        data["ID"].append(nm)
+    data["Status"] = []
+    data["Path"] = []
+    # For each sim's output, add a row
+    for (group, generator, ix), sim in sims:
+        # Sample
+        data["Group"].append(group)
+        data["Generator"].append(generator)
+        data["Sample"].append(ix)
         # Parameters
-        for p in case_generator.parameters:
-            data[p.name].append(case.parameters_n[p.name])
+        for p in analysis.parameters:
+            data[p.name].append(sim.parameters_n[p.name])
         # Status
-        status = output["Status"]
-        if status == SUCCESS:
-            msg = f"{step}: {status}"
-        else:
-            msg = f"{step}: {', '.join(err for err in status)}"
-        data["status"].append(msg)
+        data["Status"].append("")
         # File path
-        data["path"].append(case.feb_file)
-    tab = DataFrame(data).set_index("ID")
+        data["Path"].append(sim.feb_file)
+    tab = DataFrame.from_dict(data).set_index(["Group", "Generator", "Sample"])
     return tab
 
 
-def do_parallel(cases: Mapping[str, object], fun, on_case_error="stop"):
-    # cases needs to be a mapping because do_parallel is used for both case
-    # generation and running cases.  During case generation, the name is separate
-    # from the parameter values.
-    _validate_opt_on_case_error(on_case_error)  # TODO: Use enum
-    output = {}
-    pool = ProcessPool(nodes=NUM_WORKERS)
-    # TODO: Trapping every error, including Python errors, is a terrible system for
-    # reporting case generation and simulation errors.  Python errors should force
-    # termination as usual (so that you can use a debugger effectively), or at least
-    # this should be toggleable separately.  As-is, case generation must not fail,
-    # because then there is no Case object for the subsequent code paths.
-    results = pool.map(_trap_err(lambda x: fun(*x)), cases.items())
-    for case, status in results:
-        # Log the run outcome
-        output[case.name] = {"Case": case, "Status": status}
+def do_parallel(sims: Iterable[Tuple[object, Sim]], fun, on_error: OnSimError, pool):
+    """Apply function to simulations in parallel
+
+    :param sims: Iterable of (tag, Sim) tuples.  The tag is some kind of identifier
+    to disambiguate Sims when multiple generators are in use and Sim.name may not be
+    unique.
+
+    :param fun: Function to apply to each Sim.
+
+        Idiomatically, the function returns a (tag, status) tuple, where the status
+        is `spam.Success`, a `spamneggs.CaseGenerationError`,
+        a `waffleiron.febio.CheckError`, or a derived class of the above.  The tag is
+        included so that the functions may be evaluated out of order without issue.
+
+    :return: List of (tag, fun return value) tuples.
+
+    """
+    output = pool.map(lambda x: fun(*x), sims)
+    for tag, status in output:
         # Should we continue submitting cases?
-        if not status == SUCCESS and on_case_error == "stop":
+        if status != SUCCESS and on_error == OnSimError.STOP:
             print(
-                f"While working on case {case.name}, a {status.__class__.__name__} was encountered.  Because `on_case_error` = {on_case_error}, do_parallel will allow each currently running case to finish, then stop.\n"
+                f"While working on `{tag}`, a {status.__class__.__name__} was returned.  Because `on_error` = OnSimError.{on_error.name}, do_parallel will allow each currently running case to finish, then stop.\n"
             )
             pool.close()
             break
     return output
 
 
-def expand_run_errors(cases: DataFrame):
+def expand_run_errors(cases: DataFrame, group="sampled"):
     """Return cases table with run error columns instead of one status column"""
-    errors = defaultdict(lambda: np.zeros(len(cases), dtype=bool))
-    run_status = np.full(len(cases), None)
-    for irow in range(len(cases)):
-        status = cases["status"].iloc[irow]
+    out = cases.loc[IndexSlice[group, :, :]].copy().reset_index()
+
+    errors = defaultdict(lambda: np.zeros(len(out), dtype=bool))
+    run_status = np.full(len(out), None)
+    for ix in range(len(out)):
+        status = out["Status"].iloc[ix]
         i = status.find(":")
         phase = status[:i]
         codes = [s.strip() for s in status[i + 1 :].split(",")]
         if phase != "Run":
-            run_status[irow] = "No Run"
+            run_status[ix] = "No Run"
         elif "Success" in codes:
-            run_status[irow] = "Success"
+            run_status[ix] = "Success"
             if len(codes) > 1:
                 raise ValueError(
-                    f"Case {irow}: Run was recorded as successful but additional error codes were present.  The codes were {', '.join(codes)}."
+                    f"Sim {(out['Sample'].iloc[ix], out['Generator'].iloc[ix])}: Run was recorded as successful but additional error codes were present.  The codes were {', '.join(codes)}."
                 )
         else:
-            run_status[irow] = "Error"
+            run_status[ix] = "Error"
         for code in codes:
             if code == "Success":
                 continue
-            errors[code][irow] = True
+            errors[code][ix] = True
     # Return cases table augmented with run status and error columns
-    out = cases.copy()
     out["Run Status"] = pd.Series(
         run_status, dtype=CategoricalDtype(["Success", "Error", "No Run"])
     )
@@ -653,7 +850,7 @@ def expand_run_errors(cases: DataFrame):
     return out, tuple(errors.keys())
 
 
-def import_cases(generator: CaseGenerator):
+def import_cases(generator: SimGenerator):
     """Recheck all auto-generated cases in analysis and update solution status
 
     This function is meant to be used when you're manually moving simulation files
@@ -662,17 +859,17 @@ def import_cases(generator: CaseGenerator):
     """
     # TODO: Handle named cases
     analysis = Analysis(generator)
-    cases = analysis.table_auto_cases
-    for i in cases.index:
-        pth_feb = generator.directory / cases.loc[i, "path"]
+    table = analysis.table_sampled_sims
+    for i in table.index:
+        pth_feb = generator.directory / table.loc[i, "path"]
         # Check if there is already a run message; do not overwrite it.  Once
         # `import_cases` runs the same suite of checks that the original run did,
         # we can overwrite it.
-        if cases.loc[i, "status"].startswith("Run: "):
+        if table.loc[i, "status"].startswith("Run: "):
             continue
         # Check if the model file is even there
         if not pth_feb.exists():
-            cases.loc[i, "status"] = "Missing"
+            table.loc[i, "status"] = "Missing"
             continue
         # Check if the simulation files exist
         pth_log = pth_feb.with_suffix(".log")
@@ -686,138 +883,121 @@ def import_cases(generator: CaseGenerator):
         elif log.termination == "Normal":
             # TODO: Incorporate generator's checks.  Need to reconstitute the case,
             #  since check functions accept the case as their argument.
-            cases.loc[i, "status"] = f"Run: {SUCCESS}"
+            table.loc[i, "Status"] = f"Run: {SUCCESS}"
         else:
-            cases.loc[i, "status"] = f"Run: {log.termination} termination"
-    analysis.update_table_auto_cases(cases)
+            table.loc[i, "Status"] = f"Run: {log.termination} termination"
+    analysis.write_sims_table(table)
 
 
-def run_case(name, case):
+def _format_fname(s):
+    return s.replace(" ", "_")
+
+
+def _run_sim(tag, case):
     """Run a case's simulations and check its output as part of a sensitivity analysis
 
-    This function is designed to be used with `do_parallel()`, hence the strange
-    return value.
+    This function is meant to be used with parallel execution in which the results
+    may be returned out of order, which is why the tag is included in the return value.
 
     """
     try:
         status = case.run(raise_on_check_fail=False)
-    except FEBioError as err:
-        status = [err]
+    except FEBioError as e:
+        status = [e]
     if status != SUCCESS:
-        for err in status:
-            print(f"Case {name}: {err!r}")
-    return case, status
+        for e in status:
+            print(f"Sim {tag}: {e!r}")
+    return tag, status
 
 
 def run_sensitivity(
-    case_generator, distributions, nlevels, named_levels={}, on_case_error="stop"
+    analysis: Analysis,
+    distributions,
+    nlevels,
+    named_levels={},
+    on_error=OnSimError.STOP,
+    num_workers=NUM_WORKERS_DEFAULT,
 ):
-    """Run a sensitivity analysis from an analysis object."""
-    named_levels = {
-        name: cleanup_levels_units(levels, case_generator.parameters)
-        for name, levels in named_levels.items()
-    }
-    _validate_opt_on_case_error(on_case_error)
+    """Run a sensitivity analysis from an analysis object
+
+    :param on_error: Action to take when generating a simulation's files raises a
+    CaseGenerationError, or running a simulation raises .
+
+    """
+    pool = ThreadPool(nodes=num_workers)
     # Set waffleiron to run FEBio with only 1 thread, since we'll be running one
     # FEBio process per core
     wfl.febio.FEBIO_THREADS_DEFAULT = 1
 
-    def replace_status(table, output, step=None):
-        if step is not None:
-            prefix = f"{step}: "
-        else:
-            prefix = ""
-        for i, info in output.items():
-            status = info["Status"]
-            if status == SUCCESS:
-                msg = f"{prefix}{status}"
-            else:
-                # We assume status is iterable, but if status came from a captured
-                # error instead of the custom checks (which return a list of errors),
-                # it probably won't be iterable.  So we need to wrap it.
-                try:
-                    status = iter(status)
-                except TypeError:
-                    status = [status]
-                msg = f"{prefix}{', '.join(err.__class__.__name__ for err in status)}"
-            table.loc[i, "status"] = msg
+    # Define samples
+    named = {
+        name: cleanup_levels_units(levels, analysis.parameters)
+        for name, levels in named_levels.items()
+    }
+    sampled = full_factorial_values(analysis.parameters, distributions, nlevels)
 
-    def make_f_gen(
-        case_generator: CaseGenerator,
-        subdir_name,
-    ):
-        """Generate a case as part of a sensitivity analysis"""
+    # Define sims
+    generators = {g.name: g for g in analysis.generators}
+    sims = [
+        (
+            (group, g.name, ix),
+            g.define_sim(ix, sample, directory=g.directory / group),
+        )
+        for group, samples in (("named", named), ("sampled", sampled))
+        for ix, sample in samples.items()
+        for g in analysis.generators
+    ]
 
-        def f(name, parameter_values):
-            return (
-                case_generator.generate_case(
-                    name, parameter_values, sub_dir=subdir_name
-                ),
-                SUCCESS,
-            )
+    # Generate named sims
+    def f_gen(tag, sim):
+        generator = generators[tag[1]]
+        try:
+            generator.generate_sim(sim)
+        except CaseGenerationError as err:
+            print(f"Sim {tag}:\n")
+            traceback.print_exc()
+            print()
+            return tag, err
+        return tag, SUCCESS
 
-        return f
+    output = do_parallel(sims, f_gen, on_error=on_error, pool=pool)
+    table = sims_table(analysis, sims)
+    _update_table_status(table, output, step="Generate")
+    analysis.write_sims_table(table)
 
-    def process_group(case_generator, name, parameter_values):
-        pth_table = case_generator.directory / f"{name}_cases.csv"
-        f = make_f_gen(case_generator, f"{name}_cases")
-        output = do_parallel(parameter_values, f, on_case_error=on_case_error)
-        table = cases_table(case_generator, output)
-        write_cases_table(table, pth_table)
-        # Run the cases
-        cases = {nm: e["Case"] for nm, e in output.items()}
-        output = do_parallel(cases, run_case, on_case_error=on_case_error)
-        replace_status(table, output, step="Run")
-        write_cases_table(table, pth_table)
-        return table, pth_table
-
-    # Generate the named cases
-    pth_named_table = case_generator.directory / f"named_cases.csv"
-    groups = {}
-    groups["named"] = process_group(case_generator, "named", named_levels)
-    sensitivity_values = full_factorial_values(
-        case_generator.parameters, distributions, nlevels
-    )
-    groups["generated"] = process_group(case_generator, "generated", sensitivity_values)
+    # Run the cases
+    output = do_parallel(sims, _run_sim, on_error=on_error, pool=pool)
+    _update_table_status(table, output, step="Run")
+    analysis.write_sims_table(table)
 
     # Check if error terminations prevent analysis of results
-    for nm, (tab, pth) in groups.items():
-        n_run_error = np.sum(tab["status"] != "Run: Success")
-        n_success = np.sum(tab["status"] == "Run: Success")
-        n_not_run = int(np.sum([s.startswith("Generate") for s in tab["status"]]))
+    table = table.reset_index()
+    for group, tab in table.groupby("Group"):
+        n_run_error = np.sum(tab["Status"] != "Run: Success")
+        n_success = np.sum(tab["Status"] == "Run: Success")
+        n_not_run = int(np.sum([s.startswith("Generate") for s in tab["Status"]]))
         error_report = (
-            f"\nOf {len(tab)} {nm} sensitivity cases:\n"
-            f"{n_success} cases ran successfully\n"
-            f"{n_run_error} cases had a run error\n"
-            f"{n_not_run} cases did not have a run attempt\n"
-            f"See {pth}"
+            f"\nOf {len(tab)} {group} simulations:\n"
+            f"{n_success} simulations ran successfully\n"
+            f"{n_run_error} simulations had a run error\n"
+            f"{n_not_run} simulations did not have a run attempt\n"
+            f"See {analysis.directory / 'simulations.csv'}"
         )
         print(error_report)
         if n_run_error != 0:
-            if on_case_error == "hold":
+            if on_error == OnSimError.HOLD:
                 print(
                     f"Because there at least one simulation had an error and `on_case_error` = 'hold', simulation was attempted for all cases but the sensitivity analysis was stopped prior to data analysis.  To continue with the sensitivity analysis, manually correct the error terminations (or not) and call `tabulate` and `plot_sensitivity`."
                 )
                 sys.exit()
-            elif on_case_error == "stop":
+            elif on_error == OnSimError.STOP:
                 print(
                     f"Because there was at least one simulation had an error and `on_case_error` = 'stop', the sensitivity analysis was stopped after the first simulation error, before running all cases."
                 )
                 sys.exit()
     # Tabulate and plot the results
-    tabulate(case_generator)
-    makefig_sensitivity_all(case_generator)
-
-
-def generate_cases_serial(
-    generator: CaseGenerator, parameter_values: Mapping[str, Mapping[str, Quantity]]
-):
-    """Generate simulation definition files for named cases"""
-    cases = [
-        generator.generate_case(name, levels, sub_dir="named_cases")
-        for name, levels in parameter_values.items()
-    ]
-    return cases
+    tabulate(analysis)
+    makefig_sensitivity_all(analysis)
 
 
 def full_factorial_values(parameters, distributions, nlevels):
@@ -849,110 +1029,27 @@ def full_factorial_values(parameters, distributions, nlevels):
     return parameter_values
 
 
-def make_case_files(analysis, cases, on_case_error="stop"):
-    """Write model files for each case and return a table of cases.
-
-    Note that each case's model generation function is allowed to do
-    arbitrary computation, so generating the files write for each case
-    may do work such as running helper simulations.
-
-    """
-    # Generate the case's model files
-    case_status = {case.name: None for case in cases}
-    for case in cases:
-        try:
-            case.write_model()
-        except Exception as err:
-            # If the case generation fails, log the error and deal with it
-            # according to the on_case_error argument.
-            if on_case_error == "stop":
-                raise CaseGenerationError(
-                    f"Case generation failed for case ID = '{case.name}' in "
-                    "directory '{case.sim_file.parent}'.  Because `on_case_error` "
-                    "= {on_case_error}, spamneggs will now exit."
-                )
-            elif on_case_error in ("hold", "ignore"):
-                case_status[case.name] = "generation error"
-        else:
-            case_status[case.name] = "generation complete"
-    return case_status
-
-
-def tabulate_case_write(case, dir_out=None):
-    """Tabulate variables for single case analysis & write to disk."""
-    # Find/create output directory
-    if dir_out is None:
-        dir_out = case.sim_file.parent
-    else:
-        dir_out = Path(dir_out)
-    if not dir_out.exists():
-        dir_out.mkdir()
-    # Tabulate the variables
-    record, timeseries = tabulate_case(case)
-    with open(dir_out / f"{case.name}_vars.json", "w") as f:
-        write_record_to_json(record, f)
-    timeseries.to_csv(dir_out / f"{case.name}_timeseries_vars.csv", index=False)
-    makefig_case_tsvars(timeseries, dir_out=dir_out, casename=case.name)
-    return record, timeseries
-
-
-def tabulate(analysis: CaseGenerator):
-    """Tabulate output from an analysis."""
-    for nm, fbase in (
-        ("named", "named"),
-        ("sensitivity", "generated"),
-    ):
-        ivars_table = defaultdict(list)  # we don't know param names in advance
-        ivars_table["case"] = []  # force creation of the index column
-        pth_cases = analysis.directory / f"{fbase}_cases.csv"
-        cases = pd.read_csv(pth_cases, index_col=0)
-        for i in cases.index:
-            if not cases.loc[i, "status"] == "Run: Success":
-                # Simulation failure.  Don't bother trying to tabulate the results.
-                # TODO: Partial tabulations could still be useful for troubleshooting
-                continue
-            case = Case(
-                i,
-                analysis.parameters,
-                {p.name: cases[p.name].loc[i] for p in analysis.parameters},
-                analysis.variables,
-                directory=analysis.directory / f"{fbase}_cases",
-                checks=analysis.checks,
-            )
-            record, timeseries = tabulate_case_write(
-                case, dir_out=analysis.directory / "case_output"
-            )
-            ivars_table["case"].append(i)
-            for p in analysis.parameters:
-                k = f"{p.name} [param]"
-                ivars_table[k].append(cases.loc[i, p.name])
-            for v in record["instantaneous variables"]:
-                k = f"{v} [var]"
-                ivars_table[k].append(record["instantaneous variables"][v]["value"])
-        df_ivars = DataFrame(ivars_table).set_index("case")
-        df_ivars.to_csv(
-            analysis.directory / f"{fbase}_cases_-_inst_vars.csv", index=True
-        )
-
-
-def tab_tsvars_corrmap(analysis, tsdata, fun_corr=corr_pearson):
+def tab_tsvars_corrmap(analysis, tsdata: Dict[str, TSVarData], fun_corr=corr_pearson):
     """Return table of time series vs. parameter correlation vectors"""
-    tsdata = tsdata.copy().reset_index().set_index("Step")
     # Calculate sensitivity vectors
-    ntimes = len(tsdata.index.unique())  # number of time points
     corr_vectors = {
-        (p.name, v): np.zeros(ntimes)
+        (p.name, v): np.zeros(len(tsdata[v].steps))
         for p in analysis.parameters
         for v in analysis.variables
     }
     for v in analysis.variables:
-        if np.any(np.isnan(tsdata[f"{v} [var]"])):
+        if np.any(np.isnan(tsdata[v].values())):
             raise ValueError(f"NaNs detected in values for {v}.")
-    for i in range(ntimes):
-        for parameter in analysis.parameters:
-            for vnm in analysis.variables:
-                ρ = fun_corr(tsdata.loc[i], f"{parameter.name} [param]", f"{vnm} [var]")
-                corr_vectors[(parameter.name, vnm)][i] = ρ
+    for v in analysis.variables:
+        for p in analysis.parameters:
+            for i in tsdata[v].steps:
+                data = _merge_tsdata_params(analysis, tsdata[v].data).set_index(
+                    "Step", append=True
+                )
+                ρ = fun_corr(
+                    data.xs(i, level="Step"), f"{p.name} [param]", f"{v} [var]"
+                )
+                corr_vectors[(p.name, v)][i] = ρ
     correlations = DataFrame(corr_vectors).stack(dropna=False)
     correlations.index.set_names(["Time Point", "Variable"], inplace=True)
     correlations = correlations.melt(
@@ -961,39 +1058,29 @@ def tab_tsvars_corrmap(analysis, tsdata, fun_corr=corr_pearson):
     return correlations
 
 
-def makefig_sensitivity_all(analysis, tsfilter=None):
+def makefig_sensitivity_all(
+    analysis: Analysis, sample_ids: Optional[Dict[str, Sequence]] = None, tsfilter=None
+):
     """Make all sensitivity analysis figures
+
+    :param analysis: Analysis object, which provides access to simulation data for
+    all samples.
+
+    :param sample_ids: Restrict the analysis to the provided groups and sample IDs.
+    By default, every sample with a complete set of successful simulations is used.
 
     :param tsfilter: Function that takes a timeseries data table, modifies it, and
     returns it.
 
     """
-    # For temporary backwards compatibility
-    if isinstance(analysis, CaseGenerator):
-        analysis = Analysis(analysis)
-    # Named cases
-    named_cases = analysis.table_named_cases
-    # Named cases are manually constructed and so should converge.  If they do not, it's
-    # probably a user problem.  But you still  need to see what happened when there's an
-    # error, so the plotting function should press on.
-    named_cases = named_cases[named_cases["status"] == "Run: Success"]
+    if sample_ids is None:
+        sample_ids = _default_sample_ids(analysis)
 
     # Sensitivity cases
-    cases = analysis.table_auto_cases
-    cases = cases[cases["status"] == "Run: Success"]
+    cases = analysis.sampled_sims_table().loc[IndexSlice[:, sample_ids["sampled"]], :]
 
     # Read parameters
     param_values = {p.name: cases[p.name] for p in analysis.parameters}
-
-    # Get variable names
-    ivar_names = [
-        nm
-        for nm, var in analysis.variables.items()
-        if var.temporality == "instantaneous"
-    ]
-    tsvar_names = [
-        nm for nm, var in analysis.variables.items() if var.temporality == "time series"
-    ]
 
     # Plots for errors
     makefig_error_counts(analysis)
@@ -1002,46 +1089,56 @@ def makefig_sensitivity_all(analysis, tsfilter=None):
 
     # Plots for instantaneous variables
     ivar_values = defaultdict(list)
-    if len(ivar_names) > 0:
+    if len(analysis.instantaneous_variables) > 0:
         # Skip doing the work of reading each case's data if there are
         # no instantaneous variables to tabulate
-        for i in cases.index:
-            # TODO: There is an opportunity for improvement here: We could
-            # preserve the tree from the first read of the analysis XML and
-            # re-use it here instead of re-reading the analysis XML for
-            # every case.  However, to do this the case generation must not
-            # alter the analysis XML tree.
-            record, tab_timeseries = analysis.case_data(i)
-            for nm in ivar_names:
+        for i in sample_ids:
+            # TODO: There is an opportunity for improvement here: We could preserve
+            #  the tree from the first read of the analysis XML and re-use it here
+            #  instead of re-reading the analysis XML for every case.  However,
+            #  to do this the case generation must not alter the analysis XML tree.
+            for nm in analysis.instantaneous_variables:
+                generator = analysis.instantaneous_variables[nm][0]
+                record, _ = analysis.sim_data(generator, i)
                 ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
-        makefig_sensitivity_ivar_all(analysis, param_values, ivar_names, ivar_values)
+        makefig_sensitivity_ivar_all(analysis, param_values, ivar_values)
 
-    # Summarize time series variables
-    if len(tsvar_names) > 0:
-        tsdata = analysis.cases_tsdata(cases)
-        if tsfilter is not None:
-            tsdata = tsfilter(tsdata)
-        # Summarize time series variables' data in a table
-        tsvar_summary = (
-            tsdata[["Step", "Time"] + [f"{c} [var]" for c in analysis.variables.keys()]]
-            .groupby("Step")
-            .describe()
+    # Summarize time series variables and collect time series data.  Unfortunateley, if
+    # we put both data for both named and sampled samples in the same table, Pandas will
+    # coerce the integer sampled IDs to strings, which breaks .loc[].  So we have to
+    # keep them separate, or only tabulate the sampled values and access the named
+    # values on an ad-hoc basis.  Ad-hoc access is not a good idea because it will be
+    # hard to consistently apply `tsfilter`.
+    tsvar_data = {group: {} for group in sample_ids}
+    for group in tsvar_data:
+        for g in analysis.generators:
+            try:
+                tsvar_data[group].update(
+                    analysis.samples_tsdata(g.name, group, sample_ids["sampled"])
+                )
+            except EmptySelectionError:
+                continue
+    # Filter desired times
+    if tsfilter is not None:
+        for group in sample_ids:
+            for v in analysis.timeseries_variables:
+                tsvar_data[group][v] = tsfilter(tsvar_data[v])
+    # Summarize sampled time series variable's data in a table
+    for v in analysis.timeseries_variables:
+        tsvar_summary = tsvar_data["sampled"][v].values().groupby("Step").describe()
+        tsvar_summary.to_csv(
+            analysis.directory / f"sampled_-_tsvar_{_format_fname(v)}_summary.csv",
+            index=True,
         )
-        tsvar_summary.columns = [
-            f"{c[0].removesuffix(' [var]')}, {c[1]}" for c in tsvar_summary.columns
-        ]
-        tsvar_summary.reset_index().to_csv(
-            analysis.directory / "generated_cases_-_timeseries_var_summary.csv",
-            index=False,
-        )
-        # Plots for time series variables
-        makefig_sensitivity_tsvar_all(analysis, tsvar_names, tsdata, cases, named_cases)
+    # Plots for time series variables
+    makefig_sensitivity_tsvar_all(analysis, tsvar_data, sample_ids=sample_ids)
 
 
 def makefig_error_counts(analysis):
     """Plot error proportions and correlations"""
+    # TODO: split up by generator, probably with a child function
     # Collect error counts from cases table
-    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
+    cases, error_codes = expand_run_errors(analysis.sims_table, group="sampled")
     outcome_count = dict(cases["Run Status"].value_counts())
     error_count = {code: cases[code].sum() for code in error_codes}
     # Plot outcome & error counts
@@ -1054,8 +1151,8 @@ def makefig_error_counts(analysis):
     )
     # (1) Outcome counts
     ax = fig.add_subplot(gs0[0, 0])
-    ax.set_title("Run status", fontsize=FONTSIZE_FIGLABEL)
-    ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
+    ax.set_title("Run Status", fontsize=FONTSIZE_FIGLABEL)
+    ax.set_ylabel("Simulation Count", fontsize=FONTSIZE_AXLABEL)
     ax.bar("Success", outcome_count["Success"], color="black")
     ax.bar("Error", outcome_count["Error"], color="gray")
     ax.bar("No Run", outcome_count["No Run"], color="white", edgecolor="gray")
@@ -1065,7 +1162,7 @@ def makefig_error_counts(analysis):
     # (2) Error counts
     ax = fig.add_subplot(gs0[0, 1])
     ax.set_title("Error breakdown", fontsize=FONTSIZE_FIGLABEL)
-    ax.set_ylabel("Case Count", fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel("Simulation Count", fontsize=FONTSIZE_AXLABEL)
     for x, c in sorted(error_count.items()):
         if x == "Success":
             continue
@@ -1132,7 +1229,7 @@ def makefig_error_counts(analysis):
 
 def makefig_error_pdf_uniparam(analysis):
     """For each parameter write figure with conditional error PDFs"""
-    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
+    cases, error_codes = expand_run_errors(analysis.sims_table, group="sampled")
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
 
@@ -1201,7 +1298,7 @@ def makefig_error_pdf_uniparam(analysis):
 
 def makefig_error_pdf_biparam(analysis):
     """For each parameter pair write figure with conditional error PDFs"""
-    cases, error_codes = expand_run_errors(analysis.table_auto_cases)
+    cases, error_codes = expand_run_errors(analysis.sims_table, group="sampled")
     # TODO: Levels information should probably be stored in the analysis object
     levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
 
@@ -1283,7 +1380,8 @@ def makefig_error_pdf_biparam(analysis):
         )
 
 
-def makefig_sensitivity_ivar_all(analysis, param_values, ivar_names, ivar_values):
+def makefig_sensitivity_ivar_all(analysis, param_values, ivar_values):
+    ivar_names = analysis.instantaneous_variables
     param_names = [p.name for p in analysis.parameters]
     # Matrix of instantaneous variable vs. parameter scatter plots
     npanels_w = len(param_names) + 1
@@ -1357,55 +1455,54 @@ def makefig_sensitivity_ivar_all(analysis, param_values, ivar_names, ivar_values
             fig.savefig(analysis.directory / f"distribution_-_{nm}.svg")
 
 
-def get_reference_tsdata(analysis, tsdata, cases, named_cases):
-    if "nominal" in named_cases.index:
-        # Plot nominal case
-        record, ref_ts = analysis.case_data("nominal")
-        ref_ts.columns = [
-            f"{s} [var]" if not s in ("Time", "Step") else s for s in ref_ts.columns
-        ]
+def get_rep_sample(analysis):
+    """Return time series variables for a representative specimen"""
+    if "nominal" in analysis.sample_ids:
+        return ("named", "nominal")
     else:
         # Return values for median generated case, if possible
-        #
-        # TODO: It should be easier  to get  the levels of  an analysis, or  the median
-        # should be calculated based on the variables rather than the parameters.
-        param_values = {k: cases[k.name] for k in analysis.parameters}
+        sims = analysis.sims_table
+        # TODO: It should be easier to get the levels of an analysis, or the median
+        #  should be calculated based on the variables rather than the parameters.
+        param_values = {k: sims[k.name] for k in analysis.parameters}
         param_nlevels = {k: len(np.unique(v)) for k, v in param_values.items()}
         if any([n % 2 == 0 for n in param_nlevels.values()]):
             # The median parameter values are not represented in the cases
-            warn(
-                "With an even number of parameter levels, there is no case with median parameter values to serve as a representative case.  A random case will be selected as the representative case."
-            )
-            candidates = cases[cases["status"] == f"Run: {SUCCESS}"]
-            case_id = candidates.index[len(candidates) // 2]
+            candidates = sims[sims["Status"] == f"Run: {SUCCESS}"]
+            sample_id = candidates.index.get_level_values("Sample")[
+                len(candidates) // 2
+            ]
         else:
             median_levels = {
                 k.name: np.median(values) for k, values in param_values.items()
             }
-            m = np.ones(len(cases), dtype="bool")
+            m = np.ones(len(analysis.samples_table), dtype="bool")
             for param, med in median_levels.items():
-                m = np.logical_and(m, cases[param] == med)
+                m = np.logical_and(m, analysis.samples_table[f"{param} [param]"] == med)
             assert np.sum(m) == 1
-            case_id = cases.index[m][0]
-        ref_ts = tsdata[tsdata["Case"] == case_id]
-    return ref_ts
+            sample_id = analysis.samples_table.index[m][0]
+        return "sampled", sample_id
 
 
-def makefig_sensitivity_tsvar_all(
-    analysis, tsvar_names, tsdata, cases, named_cases=None
-):
+def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
     """Plot sensitivity of each time series variable to each parameter"""
-    makefig_tsvars_line(analysis, cases, named_cases)
-    makefig_tsvars_pdf(analysis, tsdata, cases, named_cases)
+    if sample_ids is None:
+        sample_ids = _default_sample_ids(analysis)
+    makefig_tsvars_line(analysis, tsdata, sample_ids)
+    makefig_tsvars_pdf(analysis, tsdata, sample_ids)
 
     # Obtain reference case for time series variables' correlation heatmap
     # TODO: The heat map figure should probably indicate which case is
     # plotted as the time series guide.
-    ref_ts = get_reference_tsdata(analysis, tsdata, cases, named_cases)
+    rep_idx = get_rep_sample(analysis)  # (group, sample ID)
+    rep_tsvalues = {
+        v: tsdata[rep_idx[0]][v].data.loc[rep_idx[1]]
+        for v in analysis.timeseries_variables
+    }
 
     # Sobol analysis
-    S1, ST = sobol_analysis_tsvars(analysis, tsdata, cases)
-    makefig_sobol_tsvars(analysis, S1, ST, ref_ts)
+    S1, ST = sobol_analysis_tsvars(analysis, tsdata["sampled"])
+    makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues)
 
     # Correlation coefficients
     for nm_corr, fun_corr in (
@@ -1413,7 +1510,9 @@ def makefig_sensitivity_tsvar_all(
         ("spearman", corr_spearman),
         ("partial", corr_partial),
     ):
-        correlations_table = tab_tsvars_corrmap(analysis, tsdata, fun_corr=fun_corr)
+        correlations_table = tab_tsvars_corrmap(
+            analysis, tsdata["sampled"], fun_corr=fun_corr
+        )
         correlations_table.to_feather(
             analysis.directory / f"tsvar_param_corr={nm_corr}.feather"
         )
@@ -1423,7 +1522,7 @@ def makefig_sensitivity_tsvar_all(
                 analysis,
                 correlations_table,
                 distances,
-                ref_ts,
+                rep_tsvalues,
                 norm=norm,
             )
             fig_heatmap.savefig(
@@ -1475,44 +1574,52 @@ def makefig_sensitivity_tsvar_all(
             pth_svd_fig_v.unlink(missing_ok=True)
 
 
-def makefig_sobol_tsvars(analysis, S1, ST, ref_ts):
-    S1 = np.array([by_var[v] for by_var in S1.values() for v in by_var])
-    ST = np.array([by_var[v] for by_var in ST.values() for v in by_var])
+def makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues):
+    S1 = np.rollaxis(
+        np.array([[by_var[v] for v in by_var] for by_var in S1.values()]), -2
+    )
+    ST = np.rollaxis(
+        np.array([[by_var[v] for v in by_var] for by_var in ST.values()]), -2
+    )
     indices = {"Order 1": S1, "Total": ST}
     variables = [(v, "") for v in analysis.variables]
-    ref_values = np.array([ref_ts[f"{v} [var]"] for v in analysis.variables])
     fr = fig_stacked_line(
-        indices, analysis.parameters, variables, ref_timeseries=ref_values
+        indices, analysis.parameters, variables, rep_tsvalues=rep_tsvalues
     )
     fr.fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=free.svg")
     fr = fig_stacked_line(
         indices,
         analysis.parameters,
         variables,
-        ref_timeseries=ref_values,
+        rep_tsvalues=rep_tsvalues,
         ymax="shared",
     )
     fr.fig.savefig(analysis.directory / "tsvars_sobol_sensitivities_scale=shared.svg")
 
 
 # noinspection PyPep8Naming
-def sobol_analysis_tsvars(analysis, tsdata, cases):
+def sobol_analysis_tsvars(analysis, tsdata):
     """Write Sobol analysis for time series variables"""
-    nsteps = len(np.unique(tsdata["Step"]))
+    samples = analysis.samples_table
     # TODO: Levels information should probably be stored in the analysis object
-    levels = {p: sorted(np.unique(cases[p.name])) for p in analysis.parameters}
+    levels = {
+        p: sorted(np.unique(samples[f"{p.name} [param]"])) for p in analysis.parameters
+    }
     S1 = {
-        p: {v: np.zeros(nsteps) for v in analysis.variables}
+        p: {v: np.zeros(len(tsdata[v].steps)) for v in analysis.variables}
         for p in analysis.parameters
     }
     ST = deepcopy(S1)
     for v in analysis.variables:
+        tab = tsdata[v].data
         # Exclude time points with zero variance
-        d = tsdata.groupby("Step")[f"{v} [var]"].var()
-        skip_steps = d[d == 0].index.values
-        data1 = tsdata[~tsdata["Step"].isin(skip_steps)]
-        m = np.ones(nsteps, dtype=bool)
-        m[skip_steps] = False
+        d = tab[v].groupby("Step").var()
+        include_steps = d[d != 0].index.values
+        tab = tab.loc[IndexSlice[:, include_steps], :]
+        # data1 = pd.merge(tab.reset_index("Step"), samples, on="Sample")
+        data1 = _merge_tsdata_params(analysis, tab)
+        m = np.zeros(len(tsdata[v].steps), dtype=bool)
+        m[include_steps] = True
         for parameter in analysis.parameters:
             # Exclude cases that are not part of a stratum with at least 2 cases
             idxs = ["Step"] + [
@@ -1586,17 +1693,6 @@ class NDArrayJSONEncoder(json.JSONEncoder):
             return float(o)
         else:
             return super().default(o)
-
-
-def write_cases_table(tab, pth):
-    """Write a cases table to disk
-
-    File paths are written relative to the target directory.
-
-    """
-    tab = tab.copy()  # table might be re-used elsewhere
-    tab["path"] = [str(p.relative_to(pth.parent)) for p in tab["path"]]
-    tab.to_csv(pth, index_label="ID")
 
 
 def write_record_to_json(record, f):
@@ -1673,7 +1769,7 @@ def plot_tsvar_param_heatmap(
     analysis,
     correlations,
     distances,
-    ref_ts,
+    rep_tsvalues,
     norm="none",
 ):
     """Plot times series variable ∝ parameter heat maps.
@@ -1791,7 +1887,12 @@ def plot_tsvar_param_heatmap(
 
     # Draw the time series line plot in the first row
     for i, var in enumerate(analysis.variables):
-        plot_reference_tsdata(ref_ts[f"{var} [var]"], axarr[0, i], varname=var)
+        plot_reference_tsdata(
+            rep_tsvalues[var].index.get_level_values("Step"),
+            rep_tsvalues[var][var],
+            axarr[0, i],
+            varname=var,
+        )
         axarr[0, i].xaxis.set_major_locator(tick_locator)
 
     def plot_colorbar(im, ax):
@@ -1828,8 +1929,8 @@ def plot_tsvar_param_heatmap(
                 cmap=CMAP_DIVERGE,
                 norm=cnorm,
                 extent=(
-                    ref_ts["Step"].iloc[0] - 0.5,
-                    ref_ts["Step"].iloc[-1] + 0.5,
+                    rep_tsvalues[var].index.get_level_values("Step")[0] - 0.5,
+                    rep_tsvalues[var].index.get_level_values("Step")[-1] + 0.5,
                     -0.5,
                     0.5,
                 ),
@@ -1927,24 +2028,29 @@ def plot_tsvar_param_distmat(analysis, distances, parameter_order=None):
     return fig
 
 
-def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
-    tsdata_by_step = tsdata.set_index("Step")
+def makefig_tsvars_pdf(analysis, tsdata, sample_ids=None):
+    if sample_ids is None:
+        sample_ids = analysis.complete_samples()
+    cases = analysis.sampled_sims_table(sample_ids["sampled"])
+    named_cases = analysis.named_sims_table(sample_ids["named"])
     for variable in analysis.variables:
+        vardata = tsdata["sampled"][variable]
+        tsdata_by_step = vardata.data.reset_index().set_index("Step")
         for parameter in analysis.parameters:
             # Collect key quantiles.  These will be used for adjusting the range of
             # the probability density plot.
-            vmin = tsdata[f"{variable} [var]"].min()
-            vmax = tsdata[f"{variable} [var]"].max()
+            vmin = vardata.values().min()
+            vmax = vardata.values().max()
             if vmin == vmax:
                 raise ValueError(
                     f"Variable {variable} has a constant value, {vmin}, so it is not appropriate to estimate its probability density function."
                 )
             yrange_all = (vmin, vmax)
-            idx_steps = tsdata["Step"].unique()
+            idx_steps = tsdata_by_step.index.values
             quantile_levels = (0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
             quantiles = tuple([] for q in quantile_levels)
             for idx_step in idx_steps:
-                v = tsdata_by_step.loc[idx_step, f"{variable} [var]"]
+                v = tsdata_by_step.loc[idx_step, variable]
                 for i, q in enumerate(v.quantile(quantile_levels).values):
                     quantiles[i].append(q)
             yrange_trim90 = (min(quantiles[1]), max(quantiles[-2]))
@@ -1973,7 +2079,13 @@ def makefig_tsvars_pdf(analysis, tsdata, cases, named_cases=None):
             fig.savefig(analysis.directory / nm)
 
 
-def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
+def makefig_tsvar_line(
+    analysis,
+    tsdata: Dict[str, Dict[str, TSVarData]],  # group → variable → TSVarData
+    variable,
+    parameter,
+    sample_ids=None,
+):
     """One-at-a-time time series variable sensitivity line plots for one parameter
 
     The inputs include a set of a parameters, one of which is chosen as the
@@ -1988,6 +2100,15 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     each named case, if any are provided.
 
     """
+    if sample_ids is None:
+        sample_ids = _default_sample_ids(analysis)
+    cases = analysis.sampled_sims_table().loc[IndexSlice[:, sample_ids["sampled"]], :]
+    if sample_ids["named"]:
+        named_cases = analysis.named_sims_table().loc[
+            IndexSlice[:, sample_ids["named"]], :
+        ]
+    else:
+        named_cases = None
     CBAR_LEVELS_THRESHOLD = 6
     # Collect parameter names and levels
     subject_parameter = parameter
@@ -2012,7 +2133,9 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     if named_cases is not None:
         ax = fig.add_subplot(gs[0, 0])
         axs.append(ax)
-        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
+        plot_tsvar_named(
+            analysis, tsdata["named"][variable], parameter, named_cases, ax
+        )
     # Plot the one-at-a-time sensitivity line plots
     #
     # For each of i = 1 … n levels, plot the variation in the output variable vs. the
@@ -2023,21 +2146,22 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         vmin=min(levels[subject_parameter.name]),
         vmax=max(levels[subject_parameter.name]),
     )
-    for i in range(n_levels):
+    for i in range(len(axs), n_plots):
         fulcrum = {
             p.name: levels[p.name][i] if i < len(levels[p.name]) else None
             for p in other_parameters
         }
-        # Select the cases that belong to the fulcrum
-        m = np.ones(len(cases), dtype="bool")  # init
+        # Select the samples to plot
+        m = np.ones(len(cases), dtype="bool")
         for nm, v in fulcrum.items():
             if v is None:
                 # No case with all parameters at level i
                 m[:] = False
                 break
             m = np.logical_and(m, cases[nm] == v)
+        ids = pd.unique(cases.index.get_level_values("Sample")[m])
         # Make the plot panel
-        ax = fig.add_subplot(gs[(i + 1) // nw, (i + 1) % nw])
+        ax = fig.add_subplot(gs[i // nw, i % nw])
         axs.append(ax)
         ax.set_title(
             f"Other parameters set to level index = {i + 1}",
@@ -2047,17 +2171,18 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
         ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
         ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
         # Plot a line for each sensitivity level of the subject parameter
-        for case_id in cases.index[m]:
-            record, tab_timeseries = analysis.case_data(case_id)
-            value = cases.loc[case_id, subject_parameter.name]
+        for id_ in ids:
+            parameter_value = cases.loc[
+                IndexSlice[:, id_], subject_parameter.name
+            ].iloc[0]
             if subject_parameter.units == "1":
-                label = f"{value:.3g}"
+                label = f"{parameter_value:.3g}"
             else:
-                label = f"{value:.3g} {subject_parameter.units:~P}"
+                label = f"{parameter_value:.3g} {subject_parameter.units:~P}"
             ax.plot(
-                tab_timeseries["Step"],
-                tab_timeseries[variable],
-                color=CMAP_DIVERGE(cnorm(cases.loc[case_id, subject_parameter.name])),
+                tsdata["sampled"][variable].steps,
+                tsdata["sampled"][variable].values(id_),
+                color=CMAP_DIVERGE(cnorm(parameter_value)),
                 label=label,
             )
         # Format the plot
@@ -2077,11 +2202,13 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
                 ax.legend(title=subject_parameter.name, fontsize=FONTSIZE_AXLABEL)
     # Link the y axes if each has a similar range (within an order of magnitude) as
     # the others
-    ranges = [ax.get_ylim()[1] - ax.get_ylim()[0] for ax in axs]
-    if max(ranges) / min(ranges) < 10:
-        # Link the y-axis across axes
-        for ax in axs[1:]:
-            ax.sharey(axs[0])
+    ylim = [ax.get_ylim() for ax in axs]
+    y1 = np.max(ylim)
+    y0 = np.min(ylim)
+    spans = np.array([(ymax - ymin) / (y1 - y0) for ymin, ymax in ylim])
+    if np.all(spans > 0.1):
+        for ax in axs:
+            ax.set_ylim((y0, y1))
     fig.suptitle(
         f"{variable} time series vs. {subject_parameter.name}",
         fontsize=FONTSIZE_FIGLABEL,
@@ -2108,35 +2235,42 @@ def makefig_tsvar_line(analysis, variable, parameter, cases, named_cases=None):
     fig.savefig(analysis.directory / nm.replace(" ", "_"))
 
 
-def makefig_tsvars_line(analysis, cases, named_cases=None):
+def makefig_tsvars_line(analysis, tsdata, sample_ids=None):
     """One-at-a-time sensitivity line plots for all variables and parameters"""
-
+    if sample_ids is None:
+        sample_ids = _default_sample_ids(analysis)
     # TODO: Figure out how to plot parameter sensitivity for multiple variation
     # (parameter interactions)
     for variable in analysis.variables:
         for parameter in analysis.parameters:
             makefig_tsvar_line(
-                analysis, variable, parameter, cases, named_cases=named_cases
+                analysis,
+                tsdata,
+                variable,
+                parameter,
+                sample_ids,
             )
 
 
-def plot_tsvar_named(analysis, variable, parameter, named_cases, ax):
+def plot_tsvar_named(
+    analysis, tsdata: TSVarData, parameter: Parameter, named_cases, ax
+):
     """Plot time series variable for named cases into an axes"""
     ax.set_title(f"Named cases", fontsize=FONTSIZE_AXLABEL)
-    ax.set_ylabel(variable, fontsize=FONTSIZE_AXLABEL)
+    ax.set_ylabel(tsdata.variable, fontsize=FONTSIZE_AXLABEL)
     ax.set_xlabel("Time point [1]", fontsize=FONTSIZE_AXLABEL)
     ax.tick_params(axis="x", labelsize=FONTSIZE_TICKLABEL)
     ax.tick_params(axis="y", labelsize=FONTSIZE_TICKLABEL)
-    for i, case_id in enumerate(named_cases.index):
-        record, tab_timeseries = analysis.case_data(case_id)
-        value = named_cases.loc[case_id, parameter.name]
+    for i, id_ in enumerate(named_cases.index.unique("Sample")):
+        generator = analysis.variables[tsdata.variable][0]
+        value = named_cases.loc[(generator, id_), parameter.name]
         if parameter.units == "1":
-            label = f"{case_id}\n{parameter.name} = {value}"
+            label = f"{id_}\n{parameter.name} = {value}"
         else:
-            label = f"{case_id}\n{parameter.name} = {value} {parameter.units:~P}"
+            label = f"{id_}\n{parameter.name} = {value} {parameter.units:~P}"
         ax.plot(
-            tab_timeseries["Step"],
-            tab_timeseries[variable],
+            tsdata.steps,
+            tsdata.values(id_),
             label=label,
             color=colors.categorical_n7[i % len(colors.categorical_n7)],
         )
@@ -2337,13 +2471,19 @@ def fig_corr_eigenvectors(svd_data):
 
 
 def fig_tsvar_pdf(
-    analysis, tsdata, variable, vrange, parameter, cases, named_cases=None
+    analysis,
+    tsdata: Dict[str, Dict[str, TSVarData]],
+    variable,
+    vrange,
+    parameter,
+    cases,
+    named_cases=None,
 ):
     """Plot probability density of a time series variable into an axes"""
+    sampled_tsdata = tsdata["sampled"][variable]
     # TODO: Levels information should probably be stored in the analysis object
     levels = sorted(np.unique(cases[parameter.name]))
     x = np.linspace(vrange[0], vrange[1], 100)
-    steps = tsdata["Step"].unique()
     # Calculate the number of subplots
     n_plots = len(levels) + 1 if named_cases is not None else len(levels)
     nh = math.floor(n_plots**0.5)
@@ -2361,22 +2501,24 @@ def fig_tsvar_pdf(
     if named_cases is not None:
         ax = fig.add_subplot(gs[-1, -1])
         axs.append(ax)
-        plot_tsvar_named(analysis, variable, parameter, named_cases, ax)
+        plot_tsvar_named(
+            analysis, tsdata["named"][variable], parameter, named_cases, ax
+        )
         ax.set_ylim([vrange[0], vrange[1]])
     # For each level of the subject parameter, plot the time series variable's
     # probability density
-    tsdata_by_case = tsdata.set_index("Case")
+    tsdata_by_sample = sampled_tsdata.data.reset_index().set_index("Sample")
     for i, level in enumerate(levels):
         ax = fig.add_subplot(gs[i // nw, i % nw])
         axs.append(ax)
         stratum = (
-            tsdata_by_case.loc[
-                cases[cases[parameter.name] == level].index
+            tsdata_by_sample.loc[
+                cases[cases[parameter.name] == level].index.get_level_values("Sample")
             ].reset_index()
         ).set_index("Step")
-        p = np.full((len(x), len(steps)), np.nan)
-        for step in steps:
-            v = stratum.loc[[step]][f"{variable} [var]"].array
+        p = np.full((len(x), len(sampled_tsdata.steps)), np.nan)
+        for step in sampled_tsdata.steps:
+            v = stratum.loc[[step]][f"{variable}"].array
             # ^ wrap index in list literal so we always get a Series object
 
             # Use sklearn.neighbors.KernelDensity because it's robust to zero
@@ -2395,7 +2537,7 @@ def fig_tsvar_pdf(
             origin="lower",
             interpolation="nearest",
             cmap=cmap,
-            extent=(-0.5, len(steps) + 0.5, vrange[0], vrange[1]),
+            extent=(-0.5, len(sampled_tsdata.steps) + 0.5, vrange[0], vrange[1]),
         )
         cbar = fig.colorbar(im)
         cbar.set_label("Probability Density [1]", fontsize=FONTSIZE_TICKLABEL)
@@ -2422,16 +2564,67 @@ def fig_tsvar_pdf(
     return fig, axs
 
 
-def tabulate_case(case):
-    """Tabulate variables for a single analysis case."""
-    case_tree = read_xml(case.feb_file)
+def tabulate(analysis: Analysis):
+    """Tabulate output from an analysis"""
+    dir_out = analysis.directory / "output"
+    dir_out.mkdir(exist_ok=True)
+    samples = analysis.samples_table
+    sims = analysis.sims_table
+    # Iterate over groups first b/c we have group-specific tables to create
+    for group, group_samples in samples.groupby("Group"):
+        group_samples = group_samples.droplevel("Group")
+        ivars_table = {"Sample": []}
+        ivars_table.update({f"{p.name} [param]": [] for p in analysis.parameters})
+        ivars_table.update({f"{v} [var]": [] for v in analysis.instantaneous_variables})
+        for sample_id in group_samples.index.get_level_values("Sample"):
+            for generator in analysis.generators:
+                status = sims.loc[(group, generator.name, sample_id), "Status"]
+                if not status == "Run: Success":
+                    # Simulation failure.  Don't bother trying to tabulate the results.
+                    # TODO: Partial tabulations could still be useful for troubleshooting
+                    continue
+                # TODO: Handle IDs for multi-sim samples in a more sophisticated way
+                sim = Sim(
+                    sample_id,
+                    # ^ .feb path uses this, so it cannot change
+                    analysis.parameters,
+                    {
+                        p.name: samples.loc[(group, sample_id), f"{p.name} [param]"]
+                        for p in analysis.parameters
+                    },
+                    generator.variables,
+                    directory=(
+                        analysis.directory
+                        / sims.loc[(group, generator.name, sample_id), "Path"]
+                    ).parent,
+                    checks=generator.checks,
+                )
+                record, timeseries = tabulate_sim_write(
+                    sim, dir_out=dir_out / generator.name
+                )
+                ivars_table["Sample"].append(sample_id)
+                for p in analysis.parameters:
+                    ivars_table[f"{p.name} [param]"].append(
+                        samples.loc[(group, sample_id), f"{p.name} [param]"]
+                    )
+                for v in record["instantaneous variables"]:
+                    ivars_table[f"{v} [var]"].append(
+                        record["instantaneous variables"][v]["value"]
+                    )
+        df_ivars = DataFrame(ivars_table)
+        df_ivars.to_csv(analysis.directory / f"{group}_-_inst_vars.csv", index=True)
+
+
+def tabulate_sim(sim):
+    """Tabulate variables for a single simulation."""
+    case_tree = read_xml(sim.feb_file)
     # Read the text data files
     # TODO: Finding the text data XML elements should probably be done in Waffleiron.  Need to move this function to spamneggs.py so we can annotate the type of the arguments.
     text_data = {}
     for entity_type in ("node", "element", "body", "connector"):
         tagname = TAG_FOR_ENTITY_TYPE[entity_type]
-        fname = case.feb_file.with_suffix("").name + f"_-_{tagname}.txt"
-        pth = case.feb_file.parent / fname
+        fname = sim.feb_file.with_suffix("").name + f"_-_{tagname}.txt"
+        pth = sim.feb_file.parent / fname
         e_textdata = case_tree.find(f"Output/logfile/{tagname}[@file='{fname}']")
         if e_textdata is not None:
             text_data[entity_type] = textdata_table(pth)
@@ -2439,95 +2632,95 @@ def tabulate_case(case):
             text_data[entity_type] = None
     # Extract values for each variable based on its <var> element
     record = {"instantaneous variables": {}, "time series variables": {}}
-    for varname, var in case.variables_list.items():
-        if isinstance(var, XpltDataSelector):
-            xplt_data = case.solution().solution
+    for varname, f_var in sim.variables_list.items():
+        if isinstance(f_var, XpltDataSelector):
+            xplt_data = sim.solution().solution
             # Check component selector validity
-            dtype = xplt_data.variables[var.variable]["type"]
-            oneids = (str(i + 1) for i in var.component)
-            if dtype == "float" and len(var.component) != 0:
-                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 0 dimensions."
+            dtype = xplt_data.variables[f_var.variable]["type"]
+            oneids = (str(i + 1) for i in f_var.component)
+            if dtype == "float" and len(f_var.component) != 0:
+                msg = f"{f_var.variable}[{', '.join(oneids)}] requested), but {f_var.variable} has xplt dtype='{dtype}' and so has 0 dimensions."
                 raise ValueError(msg)
-            elif dtype == "vec3f" and len(var.component) != 1:
-                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 1 dimension."
+            elif dtype == "vec3f" and len(f_var.component) != 1:
+                msg = f"{f_var.variable}[{', '.join(oneids)}] requested), but {f_var.variable} has xplt dtype='{dtype}' and so has 1 dimension."
                 raise ValueError(msg)
-            elif dtype == "mat3fs" and len(var.component) != 2:
-                msg = f"{var.variable}[{', '.join(oneids)}] requested), but {var.variable} has xplt dtype='{dtype}' and so has 2 dimensions."
+            elif dtype == "mat3fs" and len(f_var.component) != 2:
+                msg = f"{f_var.variable}[{', '.join(oneids)}] requested), but {f_var.variable} has xplt dtype='{dtype}' and so has 2 dimensions."
                 raise ValueError(msg)
             # Get ID for region selector
-            if var.region is None:
+            if f_var.region is None:
                 region_id = None
             else:
-                region_id = var.region["ID"]
+                region_id = f_var.region["ID"]
             # Get ID for parent selector
-            if var.parent_entity is None:
+            if f_var.parent_entity is None:
                 parent_id = None
             else:
-                parent_id = var.parent_entity["ID"]
-            if var.temporality == "instantaneous":
+                parent_id = f_var.parent_entity["ID"]
+            if f_var.temporality == "instantaneous":
                 # Convert time selector to step selector
-                if var.time_unit == "time":
+                if f_var.time_unit == "time":
                     step = find_closest_timestep(
-                        var.time,
+                        f_var.time,
                         xplt_data.step_times,
                         np.array(range(len(xplt_data.step_times))),
                     )
                 value = xplt_data.value(
-                    var.variable, step, var.entity_id, region_id, parent_id
+                    f_var.variable, step, f_var.entity_id, region_id, parent_id
                 )
                 # Apply component selector
-                for c in var.component:
+                for c in f_var.component:
                     value = value[c]
                 # Save selected value
                 record["instantaneous variables"][varname] = {"value": value}
-            elif var.temporality == "time series":
+            elif f_var.temporality == "time series":
                 data = xplt_data.values(
-                    var.variable,
-                    entity_id=var.entity_id,
+                    f_var.variable,
+                    entity_id=f_var.entity_id,
                     region_id=region_id,
                     parent_id=parent_id,
                 )
-                values = np.moveaxis(np.array(data[var.variable]), 0, -1)
-                for c in var.component:
+                values = np.moveaxis(np.array(data[f_var.variable]), 0, -1)
+                for c in f_var.component:
                     values = values[c]
                 record["time series variables"][varname] = {
                     "times": xplt_data.step_times,
                     "steps": np.array(range(len(xplt_data.step_times))),
                     "values": values,
                 }
-        elif isinstance(var, TextDataSelector):
+        elif isinstance(f_var, TextDataSelector):
             # Apply entity type selector
-            tab = text_data[var.entity]
+            tab = text_data[f_var.entity]
             # Apply entity ID selector
-            tab = tab[tab["Item"] == var.entity_id]
+            tab = tab[tab["Item"] == f_var.entity_id]
             tab = tab.set_index("Step")
-            if var.temporality == "instantaneous":
+            if f_var.temporality == "instantaneous":
                 # Convert time selector to step selector.  The selector
                 # has internal validation, so we can assume the time
                 # unit is valid.
-                if var.time_unit == "time":
-                    step = find_closest_timestep(var.time, tab["Time"], tab.index)
+                if f_var.time_unit == "time":
+                    step = find_closest_timestep(f_var.time, tab["Time"], tab.index)
                     if step == 0:
                         raise ValueError(
                             "Data for step = 0 requested from an FEBio text data output file, but FEBio does not provide text data output for step = 0 / time = 0."
                         )
                     if step not in tab.index:
                         raise ValueError(
-                            f"A value for {var.variable} was requested for step = {step}, but this step is not present in the FEBio text data output."
+                            f"A value for {f_var.variable} was requested for step = {step}, but this step is not present in the FEBio text data output."
                         )
-                elif var.time_unit == "step":
-                    step = var.time
+                elif f_var.time_unit == "step":
+                    step = f_var.time
                 # Apply variable name and time selector
-                value = tab[var.variable].loc[step]
+                value = tab[f_var.variable].loc[step]
                 record["instantaneous variables"][varname] = {"value": value}
-            elif var.temporality == "time series":
+            elif f_var.temporality == "time series":
                 record["time series variables"][varname] = {
                     "times": tab["Time"].values,
                     "steps": tab.index.values,
-                    "values": tab[var.variable].values,
+                    "values": tab[f_var.variable].values,
                 }
-        elif isinstance(var, FunctionVar):
-            v = var(case)
+        elif isinstance(f_var, FunctionVar):
+            v = f_var(sim)
             if not isinstance(v, TimeSeries):
                 record["instantaneous variables"][varname] = {"value": v}
             else:
@@ -2537,12 +2730,27 @@ def tabulate_case(case):
                     "values": v.value,
                 }
         else:
-            raise ValueError(f"{var} not supported as a variable type.")
+            raise ValueError(f"{f_var} not supported as a variable type.")
     # Assemble the time series table
     tab_timeseries = {"Time": [], "Step": []}
-    for var, d in record["time series variables"].items():
+    for f_var, d in record["time series variables"].items():
         tab_timeseries["Time"] = d["times"]
         tab_timeseries["Step"] = d["steps"]
-        tab_timeseries[var] = d["values"]
+        tab_timeseries[f_var] = d["values"]
     tab_timeseries = pd.DataFrame(tab_timeseries)
     return record, tab_timeseries
+
+
+def tabulate_sim_write(sim, dir_out=None):
+    """Tabulate variables for single case analysis & write to disk."""
+    # Find/create output directory
+    dir_out = Path(dir_out)
+    if not dir_out.exists():
+        dir_out.mkdir()
+    # Tabulate the variables
+    record, timeseries = tabulate_sim(sim)
+    with open(dir_out / f"{sim.name}_vars.json", "w") as f:
+        write_record_to_json(record, f)
+    timeseries.to_csv(dir_out / f"{sim.name}_timeseries_vars.csv", index=False)
+    makefig_case_tsvars(timeseries, dir_out=dir_out, casename=sim.name)
+    return record, timeseries

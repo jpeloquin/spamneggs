@@ -124,9 +124,8 @@ def fig_template_axarr(nh, nw, xlabel=None, ylabel=None):
     return FigResultAxarr(fig, axarr)
 
 
-def plot_reference_tsdata(values, ax, varname):
+def plot_reference_tsdata(x, values, ax, varname):
     """Plot reference timeseries data into an axes"""
-    x = np.arange(len(values))
     ax.plot(x, values, color="k")
     # Set the axes limits to the min and max of the data, to match the axes limits
     # used for the heatmap images.
@@ -787,33 +786,32 @@ def plot_neighborhood(
 
 
 def fig_stacked_line(
-    values: dict, parameters, variables, ref_timeseries=None, ymax="free"
+    values: dict, parameters, variables, rep_tsvalues=None, ymax="free"
 ):
     """Return stacked line plot with filled areas underneath the lines
 
-    :parameter values: Dictionary of data labels (shown in the figure legend) → array of
-    data values.  These values will be plotted as filled line plots, with the first
-    dictionary entry plotted on top.  The arrays can be up to 3D with dim -1 → time
-    point, dim -2 → parameter, and dim -3 → variable.  If the array is less than 3D the
-    leading dimensions will be expanded.
+    :parameter values: Dictionary of data labels (which are shown in the figure
+    legend) → array of data values.  These values will be plotted as filled line
+    plots, with the first dictionary entry plotted on top.  The arrays can be up to
+    3D with dim -1 → time point, dim -2 → parameter, and dim -3 → variable.  If the
+    array is less than 3D the leading dimensions will be expanded.
 
     :parameter parameters: List of (name, units) tuples, one per parameter.
 
     :parameter variables: List of (name, units) tuples, one per variable.
 
-    :parameter ref_timeseries: (Optional) Array of scalars.  These values will be
+    :parameter rep_tsvalues: (Optional) Array of scalars.  These values will be
     plotted as a line plot at the top of the figure to serve as visual guide to when
     each time point falls in the test protocol.  The array may be up to 2D, with dim -1
     → time point and dim -2 (if present) → variable.  If the array is less than 2D the
     leading dimensions will be expanded.
 
+    :param ymax: "free" or "shared" y-axis limits.
+
     """
     parameters = [
         Parameter(*p) if not isinstance(p, Parameter) else p for p in parameters
     ]
-    if ref_timeseries is not None:
-        ref_timeseries = np.atleast_2d(ref_timeseries)
-
     colors = ["dimgray", "darkred", "royalblue", "orange"]  # last is on top
 
     def get_color(i):
@@ -831,9 +829,12 @@ def fig_stacked_line(
     ylim = np.zeros((len(parameters), len(variables)))
     # Loop over output variables
     for i_var, (var, var_units) in enumerate(variables):
-        if ref_timeseries is not None:
+        if rep_tsvalues is not None:
             plot_reference_tsdata(
-                ref_timeseries[i_var], axarr[0, i_var], varname=f"{var} [{var_units}]"
+                rep_tsvalues[var].index.get_level_values("Step"),
+                rep_tsvalues[var][var],
+                axarr[0, i_var],
+                varname=f"{var} [{var_units}]",
             )
         axarr[0, i_var].xaxis.set_major_locator(tick_locator)
         axarr[-1, i_var].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
