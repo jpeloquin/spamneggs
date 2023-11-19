@@ -1480,7 +1480,7 @@ def get_rep_sample(analysis):
             for param, med in median_levels.items():
                 m = np.logical_and(m, analysis.samples_table[f"{param} [param]"] == med)
             assert np.sum(m) == 1
-            sample_id = analysis.samples_table.index[m][0]
+            sample_id = analysis.samples_table.index.get_level_values("Sample")[m][0]
         return "sampled", sample_id
 
 
