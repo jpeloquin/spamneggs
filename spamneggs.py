@@ -718,9 +718,7 @@ def _default_sample_ids(analysis):
     for g, ids in analysis.complete_samples().items():
         sample_ids[g] = ids
     if len(sample_ids["sampled"]) == 0:
-        raise ValueError(
-            "No sample IDs to process.  If sample_ids=None was provided, this means there are no samples for which every simulation was successful."
-        )
+        raise Exception("No sample IDs with (successfully) completed simulations.")
     return sample_ids
 
 
