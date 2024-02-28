@@ -142,22 +142,26 @@ class Analysis:
         self,
         name,
         parameters,
-        generators: Union["SimGenerator", Iterable["SimGenerator"]],
+        variables: Dict[str, Tuple[str, str]],
+        generators: Iterable[Union[str, "SimGenerator"]],
         parentdir: Optional[Union[Path, str]] = None,
-        mkdir=True,
+        mkdir=False,
     ):
         """Return Analysis object
 
-        :generators: Simulation generators, which turn samples into concrete
-        simulations.
+        :param generators: Simulation generators, which turn samples into concrete
+        simulations.  To allow an existing analysis to be loaded, the generators can
+        be provided as strings.
+
+        :param parentdir: Parent directory for the analysis.  The analysis' files are
+        stored in parentdir / analysis.name.
 
         """
         self.name = name
         self.parameters = _init_parameters(parameters)
-        if isinstance(generators, SimGenerator):
-            self.generators = [generators]
-        else:
-            self.generators = generators
+        self.variables = variables
+
+        # Directories
         if parentdir is None:
             parentdir = Path(os.getcwd())
         else:
@@ -166,28 +170,57 @@ class Analysis:
         self.directory = parentdir / name
         if mkdir:
             self.directory.mkdir(exist_ok=True)
-        for g in self.generators:
-            if g.directory is None:
-                dir_ = g.set_parentdir(self.directory / "sims" / g.name)
-                if mkdir:
-                    dir_.mkdir(exist_ok=True, parents=True)
-        # Assemble list of variables from all case generators.  Variables are not shared
-        # across generators.
-        self.variables = {}
-        for g in self.generators:
-            if not self.parameters == g.parameters:
+
+        # Generators
+        self._generators = list(generators)
+        for nm, g in zip(self.generator_names, self.generators):
+            dir_ = self.directory / "sims" / nm
+            if mkdir:
+                dir_.mkdir(exist_ok=True, parents=True)
+                # TODO: Modifying the generator is not ideal
+                if g is not None:
+                    g.directory = dir_
+
+    @classmethod
+    def from_generators(
+        cls,
+        name,
+        generators: Sequence["SimGenerator"],
+        parentdir: Optional[Union[Path, str]] = None,
+        mkdir=True,
+    ):
+        parameters = generators[0].parameters
+        variables = {}
+        for g in generators:
+            if parameters != g.parameters:
                 raise ValueError(
-                    f"SimGenerator '{g.name}' has parameters that are inconsistent with this analysis."
+                    f"SimGenerator '{g.name}' has parameters inconsistent with at least one other provided generator."
                 )
             for vname, v in g.variables.items():
-                if vname in self.variables:
+                if vname in variables:
                     raise ValueError(
-                        f"{vname} is defined twice.  Second instance was encountered in generator '{g.name}'."
+                        f"{vname} is defined twice.  The second instance was encountered in generator '{g.name}'."
                     )
                 # TODO: Create a data type to store a variable definition (units,
                 # temporality), but not its implementation, which should remain on the
                 # SimGenerator and Sim objects.
-                self.variables[vname] = (g.name, v.temporality)
+                variables[vname] = (g.name, v.temporality)
+        return cls(name, parameters, variables, generators, parentdir, mkdir)
+
+    @property
+    def generators(self):
+        """Return list of SimGenerator objects if available"""
+        return [g if not isinstance(g, str) else None for g in self._generators]
+
+    @property
+    def generator_names(self):
+        """Return list of generator names
+
+        This function is useful because the generators may be provided as strings
+        rather than objects.
+
+        """
+        return [g if isinstance(g, str) else g.name for g in self._generators]
 
     def complete_samples(self):
         """Return sample IDs for which all sims were successful"""
@@ -496,10 +529,9 @@ class SimGenerator:
         self.variables: dict = variables
         self.checks = checks
         self.name = name
+        self._directory = None
         if parentdir is not None:
             self.directory = Path(parentdir).absolute() / self.name
-        else:
-            self.directory = None
 
     @classmethod
     def from_xml(cls, pth):
@@ -556,9 +588,13 @@ class SimGenerator:
         with open(sim.feb_file, "wb") as f:
             wfl.output.write_xml(tree, f)
 
-    def set_parentdir(self, dir_):
-        self.directory = Path(dir_)
-        return self.directory
+    @property
+    def directory(self):
+        return self._directory
+
+    @directory.setter
+    def directory(self, dir_):
+        self._directory = Path(dir_)
 
 
 class FEBioXMLModel:
