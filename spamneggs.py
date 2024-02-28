@@ -244,6 +244,20 @@ class Analysis:
         )
         return samples
 
+    def sims(self):
+        info = self.sims_table
+        generators = {g.name: g for g in self.generators}
+        for (group, generator_name, sample_id), r in info.iterrows():
+            sim = Sim(
+                name=sample_id,
+                parameters=self.parameters,
+                parameter_values={p.name: r[p.name] for p in self.parameters},
+                variables=self.variables,
+                directory=self.directory / "sims" / generator_name / group,
+                checks=generators[generator_name].checks,
+            )
+            yield sim
+
     @cached_property
     def sims_table(self):
         """Return table of simulations"""
@@ -376,7 +390,21 @@ class Analysis:
         table.to_csv(pth, index=False)
 
 
+class Sample:
+    """Information for a sample in parameter space
+
+    Sample is intended to work similarly to Sim but with a focus on processing data from
+    an already-run analysis, rather than running the analysis.
+
+    """
+
+    def __init__(self):
+        raise NotImplementedError
+
+
 class Sim:
+    # TODO: Need a separate class for simulation-as-a-data-record and
+    #  simulation-as-a-runnable-object.  Proposing Sample.
     def __init__(
         self,
         name: str,
