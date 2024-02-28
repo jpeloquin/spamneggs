@@ -1,4 +1,5 @@
 """Utility functions to support plots in other modules"""
+
 from collections import namedtuple
 from typing import Optional
 

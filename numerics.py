@@ -1,4 +1,5 @@
 """Numerical analysis of functions"""
+
 import functools
 from pathlib import Path
 from typing import Iterable

@@ -943,7 +943,10 @@ def run_sensitivity(
             (group, g.name, ix),
             g.define_sim(ix, sample, directory=g.directory / group),
         )
-        for group, samples in (("named", named), ("sampled", sampled))
+        for group, samples in (
+            ("named", named),
+            ("sampled", sampled),
+        )
         for ix, sample in samples.items()
         for g in analysis.generators
     ]
