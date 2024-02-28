@@ -273,10 +273,12 @@ class Analysis:
 
     @property
     def instantaneous_variables(self):
+        # TODO: make temporality not stringly-typed
         return [v for v, (g, temp) in self.variables.items() if temp == "instantaneous"]
 
     @property
     def timeseries_variables(self):
+        # TODO: make temporality not stringly-typed
         return [v for v, (g, temp) in self.variables.items() if temp == "time series"]
 
     def sim_data(self, generator, sample_id):
@@ -1148,12 +1150,12 @@ def makefig_sensitivity_all(
     # keep them separate, or only tabulate the sampled values and access the named
     # values on an ad-hoc basis.  Ad-hoc access is not a good idea because it will be
     # hard to consistently apply `tsfilter`.
-    tsvar_data = {group: {} for group in sample_ids}
+    tsvar_data = {group: {} for group in sample_ids}  # group ∈ {"named", "sampled"}
     for group in tsvar_data:
         for g in analysis.generators:
             try:
                 tsvar_data[group].update(
-                    analysis.samples_tsdata(g.name, group, sample_ids["sampled"])
+                    analysis.samples_tsdata(g.name, group, sample_ids[group])
                 )
             except EmptySelectionError:
                 continue
