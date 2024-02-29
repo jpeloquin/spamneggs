@@ -28,7 +28,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Bbox
 import pandas as pd
 from pandas import CategoricalDtype, DataFrame, IndexSlice
-from pathos.pools import ThreadPool
+from pathos.pools import ThreadPool, ProcessPool
 from pint import Quantity
 import psutil
 from sklearn.neighbors import KernelDensity
@@ -988,7 +988,9 @@ def run_sensitivity(
     CaseGenerationError, or running a simulation raises .
 
     """
-    pool = ThreadPool(nodes=num_workers)
+    # ProcessPool allows parallel model generation but is worse than ThreadPool for
+    # debugging.  ThreadPool is fine when the parallel work is all in FEBio.
+    pool = ProcessPool(nodes=num_workers)
     # Set waffleiron to run FEBio with only 1 thread, since we'll be running one
     # FEBio process per core
     wfl.febio.FEBIO_THREADS_DEFAULT = 1
