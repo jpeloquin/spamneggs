@@ -1570,7 +1570,9 @@ def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
     }
 
     # Sobol analysis
-    S1, ST = sobol_analysis_tsvars(analysis, tsdata["sampled"])
+    S1, ST = sobol_analysis_tsvars(
+        analysis, analysis.samples_table.xs("sampled"), tsdata["sampled"]
+    )
     makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues)
 
     # Correlation coefficients
@@ -1667,9 +1669,8 @@ def makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues):
 
 
 # noinspection PyPep8Naming
-def sobol_analysis_tsvars(analysis, tsdata):
+def sobol_analysis_tsvars(analysis, samples, tsdata):
     """Write Sobol analysis for time series variables"""
-    samples = analysis.samples_table
     # TODO: Levels information should probably be stored in the analysis object
     levels = {
         p: sorted(np.unique(samples[f"{p.name} [param]"])) for p in analysis.parameters
