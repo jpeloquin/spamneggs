@@ -11,9 +11,16 @@ from copy import deepcopy
 from itertools import product
 from numbers import Number
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
-
-import numpy as np
+from typing import (
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 # Third-party packages
 import scipy.cluster
@@ -141,7 +148,7 @@ class Analysis:
     def __init__(
         self,
         name,
-        parameters,
+        parameters: Sequence[Parameter],
         variables: Dict[str, Tuple[str, str]],
         generators: Iterable[Union[str, "SimGenerator"]],
         parentdir: Optional[Union[Path, str]] = None,
@@ -759,6 +766,12 @@ def _init_parameters(parameters):
     return tuple(p if isinstance(p, Parameter) else Parameter(*p) for p in parameters)
 
 
+def _ordered_parameter_subset(
+    use_parameters: Collection, original_parameters: Sequence
+):
+    return [nm for nm in use_parameters if nm in original_parameters]
+
+
 def cleanup_levels_units(
     levels: Mapping[str, Union[float, int, Quantity]], parameters: Sequence[Parameter]
 ) -> Dict[str, Quantity]:
@@ -777,11 +790,15 @@ def cleanup_levels_units(
 
 
 def corrmap_distances(analysis, correlations):
-    parameter_names = [p.name for p in analysis.parameters]
+    # We may be working with a subset of the correlation matrix, so cannot use
+    # analysis.parameters as-is
+    parameters = _ordered_parameter_subset(
+        pd.unique(correlations["Parameter"]), [p.name for p in analysis.parameters]
+    )
     by_parameter = (
         correlations.set_index(["Parameter", "Variable", "Time Point"])
         .unstack(["Variable", "Time Point"])
-        .loc[parameter_names]
+        .loc[parameters]
     )
     # ^ keep same parameter order
     arr = by_parameter.values
@@ -1069,6 +1086,35 @@ def run_sensitivity(
     makefig_sensitivity_all(analysis)
 
 
+def get_rep_sample(analysis):
+    """Return time series variables for a representative specimen"""
+    if "nominal" in analysis.sample_ids:
+        return "named", "nominal"
+    else:
+        # Return values for median generated case, if possible
+        sims = analysis.sims_table
+        # TODO: It should be easier to get the levels of an analysis, or the median
+        #  should be calculated based on the variables rather than the parameters.
+        param_values = {k: sims[k.name] for k in analysis.parameters}
+        param_nlevels = {k: len(np.unique(v)) for k, v in param_values.items()}
+        if any([n % 2 == 0 for n in param_nlevels.values()]):
+            # The median parameter values are not represented in the cases
+            candidates = sims[sims["Status"] == f"Run: {SUCCESS}"]
+            sample_id = candidates.index.get_level_values("Sample")[
+                len(candidates) // 2
+            ]
+        else:
+            median_levels = {
+                k.name: np.median(values) for k, values in param_values.items()
+            }
+            m = np.ones(len(analysis.samples_table), dtype="bool")
+            for param, med in median_levels.items():
+                m = np.logical_and(m, analysis.samples_table[f"{param} [param]"] == med)
+            assert np.sum(m) == 1
+            sample_id = analysis.samples_table.index.get_level_values("Sample")[m][0]
+        return "sampled", sample_id
+
+
 def full_factorial_values(parameters, distributions, nlevels):
     levels = {}
     # Calculate each parameter's levels
@@ -1172,12 +1218,12 @@ def makefig_sensitivity_all(
                 ivar_values[nm].append(record["instantaneous variables"][nm]["value"])
         makefig_sensitivity_ivar_all(analysis, param_values, ivar_values)
 
-    # Summarize time series variables and collect time series data.  Unfortunateley, if
-    # we put both data for both named and sampled samples in the same table, Pandas will
-    # coerce the integer sampled IDs to strings, which breaks .loc[].  So we have to
-    # keep them separate, or only tabulate the sampled values and access the named
-    # values on an ad-hoc basis.  Ad-hoc access is not a good idea because it will be
-    # hard to consistently apply `tsfilter`.
+    # Summarize time series variables and collect time series data.  Unfortunately,
+    # if we put both data for both named and sampled samples in the same table,
+    # Pandas will coerce the integer sampled IDs to strings, which breaks .loc[].  So
+    # we have to keep them separate, or only tabulate the sampled values and access
+    # the named values on an ad-hoc basis.  Ad-hoc access is not a good idea because
+    # it will be hard to consistently apply `tsfilter`.
     tsvar_data = {group: {} for group in sample_ids}  # group ∈ {"named", "sampled"}
     for group in tsvar_data:
         for g in analysis.generators:
@@ -1201,6 +1247,95 @@ def makefig_sensitivity_all(
         )
     # Plots for time series variables
     makefig_sensitivity_tsvar_all(analysis, tsvar_data, sample_ids=sample_ids)
+
+
+def makefig_global_correlations_tsvars(
+    analysis: Analysis,
+    rep_tsvalues: DataFrame,
+    correlations: DataFrame,
+    directory: Path,
+    fname_prefix: str = "",
+):
+    """Make plots for global correlation vector analysis of time series variables
+
+    The global identifiability analysis should already have been run and their results
+    tabulated, usually by `run_sensitivity`.  Optionally, some parameters can be
+    excluded to approximate the effect of assuming values for some parameters in an
+    attempt to restore identifiability of a subset of parameters for a flawed
+    experimental design.
+
+    :param analysis: Analysis object, which provides access to simulation data for
+    all samples.
+
+    :param rep_tsvalues: Time series data for a representative sample, with index
+    "Step", column "Time", and one column per time series variable.
+
+    :param correlations: Table of correlation coefficient values.  Can be read from
+    tsvar_param_corr={corr_type}.feather, where corr_type is "pearson", "spearman",
+    or "partial".  Any filtering of samples, time points, or parameters should be
+    applied to this table before passing it to `makefig_global_correlations_tsvars`.
+    Expected columns: "Time Point" (same as "Step" in `rep_tsvalues`), "Variable",
+    "Parameter", "Correlation Coefficient".
+
+    :param directory: Directory for the results.  Must already exist.
+
+    """
+    # TODO: Use consistent "Step" or "Time Point", preferable the latter.
+    # We may be working with a subset of the correlation matrix, so cannot use
+    # analysis.parameters as-is
+    parameter_names = _ordered_parameter_subset(
+        pd.unique(correlations["Parameter"]), [p.name for p in analysis.parameters]
+    )
+    # Analysis of instantaneous variables with a reduced parameter set are not supported
+    # for now; they don't have much of a role in the identifiability analyses I've run
+    # so far.
+    distances = corrmap_distances(analysis, correlations)
+    for norm in ("none", "all", "vector", "subvector"):
+        fig_heatmap, parameter_order = plot_tsvar_param_heatmap(
+            analysis,
+            correlations,
+            distances,
+            rep_tsvalues,
+            norm=norm,
+        )
+        fig_heatmap.savefig(directory / f"{fname_prefix}heatmap_norm={norm}.svg")
+        if norm == "none":
+            fig_distmat = plot_tsvar_param_distmat(
+                parameter_names, distances, parameter_order
+            )
+            fig_distmat.fig.savefig(
+                analysis.directory / f"{fname_prefix}distance_matrix_clustered.svg",
+                dpi=300,
+            )
+            fig_distmat = plot_tsvar_param_distmat(
+                parameter_names,
+                distances,
+            )
+            fig_distmat.fig.savefig(
+                analysis.directory / f"{fname_prefix}distance_matrix_unclustered.svg",
+                dpi=300,
+            )
+        # Estimate the rank of the sensitivity vectors
+        pth_svd_data = directory / f"{fname_prefix}svd.json"
+        pth_svd_fig_s = directory / f"{fname_prefix}singular_values.svg"
+        pth_svd_fig_v = directory / f"{fname_prefix}principal_axes.svg"
+        try:
+            # TODO: get the parameter order from the cluster analysis so it can be
+            #  re-used for the sensitivity vectors PCA plot
+            svd_data = corr_svd(correlations)
+            with open(pth_svd_data, "w") as f:
+                json.dump(svd_data, f)
+            fig = fig_corr_singular_values(svd_data)
+            fig.savefig(pth_svd_fig_s)
+            fig = fig_corr_eigenvectors(svd_data)
+            fig.savefig(pth_svd_fig_v)
+        except np.linalg.LinAlgError as e:
+            warn(f"Correlation matrix SVD failed: {str(e)}")
+            # Don't leave files from a previous run (if any); that would confuse the user
+            # TODO: Old files should be cleaned up at the beginning of a run
+            pth_svd_data.unlink(missing_ok=True)
+            pth_svd_fig_s.unlink(missing_ok=True)
+            pth_svd_fig_v.unlink(missing_ok=True)
 
 
 def makefig_error_counts(analysis):
@@ -1524,35 +1659,6 @@ def makefig_sensitivity_ivar_all(analysis, param_values, ivar_values):
             fig.savefig(analysis.directory / f"distribution_-_{nm}.svg")
 
 
-def get_rep_sample(analysis):
-    """Return time series variables for a representative specimen"""
-    if "nominal" in analysis.sample_ids:
-        return ("named", "nominal")
-    else:
-        # Return values for median generated case, if possible
-        sims = analysis.sims_table
-        # TODO: It should be easier to get the levels of an analysis, or the median
-        #  should be calculated based on the variables rather than the parameters.
-        param_values = {k: sims[k.name] for k in analysis.parameters}
-        param_nlevels = {k: len(np.unique(v)) for k, v in param_values.items()}
-        if any([n % 2 == 0 for n in param_nlevels.values()]):
-            # The median parameter values are not represented in the cases
-            candidates = sims[sims["Status"] == f"Run: {SUCCESS}"]
-            sample_id = candidates.index.get_level_values("Sample")[
-                len(candidates) // 2
-            ]
-        else:
-            median_levels = {
-                k.name: np.median(values) for k, values in param_values.items()
-            }
-            m = np.ones(len(analysis.samples_table), dtype="bool")
-            for param, med in median_levels.items():
-                m = np.logical_and(m, analysis.samples_table[f"{param} [param]"] == med)
-            assert np.sum(m) == 1
-            sample_id = analysis.samples_table.index.get_level_values("Sample")[m][0]
-        return "sampled", sample_id
-
-
 def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
     """Plot sensitivity of each time series variable to each parameter"""
     if sample_ids is None:
@@ -1587,62 +1693,13 @@ def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
         correlations_table.to_feather(
             analysis.directory / f"tsvar_param_corr={nm_corr}.feather"
         )
-        distances = corrmap_distances(analysis, correlations_table)
-        for norm in ("none", "all", "vector", "subvector"):
-            fig_heatmap, parameter_order = plot_tsvar_param_heatmap(
-                analysis,
-                correlations_table,
-                distances,
-                rep_tsvalues,
-                norm=norm,
-            )
-            fig_heatmap.savefig(
-                analysis.directory
-                / f"tsvar_param_corr={nm_corr}_heatmap_norm={norm}.svg"
-            )
-            if norm == "none":
-                fig_distmat = plot_tsvar_param_distmat(
-                    analysis, distances, parameter_order
-                )
-                fig_distmat.fig.savefig(
-                    analysis.directory
-                    / f"tsvar_param_corr={nm_corr}_distance_matrix_clustered.svg",
-                    dpi=300,
-                )
-                fig_distmat = plot_tsvar_param_distmat(
-                    analysis,
-                    distances,
-                )
-                fig_distmat.fig.savefig(
-                    analysis.directory
-                    / f"tsvar_param_corr={nm_corr}_distance_matrix_unclustered.svg",
-                    dpi=300,
-                )
-        # Estimate the rank of the sensitivity vectors
-        pth_svd_data = analysis.directory / f"tsvar_param_corr={nm_corr}_stats.json"
-        pth_svd_fig_s = (
-            analysis.directory / f"tsvar_param_corr={nm_corr}_singular_values.svg"
+        makefig_global_correlations_tsvars(
+            analysis,
+            rep_tsvalues,
+            correlations_table,
+            analysis.directory,
+            f"tsvar_param_corr={nm_corr}_",
         )
-        pth_svd_fig_v = (
-            analysis.directory / f"tsvar_param_corr={nm_corr}_principal_axes.svg"
-        )
-        try:
-            # TODO: get the parameter order from the cluster analysis so it can be
-            #  re-used for the sensitivity vectors PCA plot
-            svd_data = corr_svd(correlations_table)
-            with open(pth_svd_data, "w") as f:
-                json.dump(svd_data, f)
-            fig = fig_corr_singular_values(svd_data)
-            fig.savefig(pth_svd_fig_s)
-            fig = fig_corr_eigenvectors(svd_data)
-            fig.savefig(pth_svd_fig_v)
-        except np.linalg.LinAlgError as e:
-            warn(f"Correlation matrix SVD failed: {str(e)}")
-            # Don't leave files from a previous run (if any); that would confuse the user
-            # TODO: Old files should be cleaned up at the beginning of a run
-            pth_svd_data.unlink(missing_ok=True)
-            pth_svd_fig_s.unlink(missing_ok=True)
-            pth_svd_fig_v.unlink(missing_ok=True)
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues):
@@ -1862,6 +1919,11 @@ def plot_tsvar_param_heatmap(
           maximum of the subvector corresponding to the pair.
 
     """
+    # We may be working with a subset of the correlation matrix, so cannot use
+    # analysis.parameters as-is
+    parameter_names = _ordered_parameter_subset(
+        pd.unique(correlations["Parameter"]), [p.name for p in analysis.parameters]
+    )
     correlations = correlations.copy().set_index(
         ["Parameter", "Variable", "Time Point"]
     )
@@ -1871,7 +1933,7 @@ def plot_tsvar_param_heatmap(
 
     # Widths of dendrogram axes
     fig_llabelw = LABELH_MULT * FONTSIZE_FIGLABEL / 72
-    dendro_axw = 12 / 72 * len(analysis.parameters)
+    dendro_axw = 12 / 72 * len(parameter_names)
 
     # Widths of colorbar elements
     cbar_axw = 12 / 72
@@ -1906,7 +1968,7 @@ def plot_tsvar_param_heatmap(
         fig,
         axarr,
     ) = fig_blank_tsvars_by_parameter(
-        len(analysis.parameters),
+        len(parameter_names),
         len(analysis.variables),
         left_blankw=dendro_axw,
         right_blankw=rcbar_areaw,
@@ -1925,7 +1987,7 @@ def plot_tsvar_param_heatmap(
         warn(
             "Correlation distance matrix is all NaNs.  This is expected if only one parameter is varying."
         )
-        ordered_parameter_idx = np.arange(len(analysis.parameters))
+        ordered_parameter_idx = np.arange(len(parameter_names))
     else:
         links = scipy.cluster.hierarchy.linkage(
             distances, method="average", metric="correlation"
@@ -1980,7 +2042,7 @@ def plot_tsvar_param_heatmap(
     for j in range(axarr.shape[1]):
         axarr[-1, j].set_xlabel("Time Point Index", fontsize=FONTSIZE_TICKLABEL)
     for irow, iparam in enumerate(ordered_parameter_idx):
-        parameter = analysis.parameters[iparam].name
+        parameter = parameter_names[iparam]
         if norm == "vector":
             absmax = np.nanmax(np.abs(correlations.loc[parameter].values))
             cnorm = mpl.colors.Normalize(vmin=-absmax, vmax=absmax)
@@ -2074,7 +2136,9 @@ def plot_tsvar_param_heatmap(
     return fig, ordered_parameter_idx
 
 
-def plot_tsvar_param_distmat(analysis, distances, parameter_order=None):
+def plot_tsvar_param_distmat(
+    parameters: Sequence[str], distances, parameter_order=None
+):
     """Plot distance matrix of tsvar–parameter correlation vectors
 
     :parameter parameter_order: List of indices into the analysis parameters.  The
@@ -2083,14 +2147,13 @@ def plot_tsvar_param_distmat(analysis, distances, parameter_order=None):
 
     """
     if parameter_order is None:
-        parameter_order = np.arange(len(analysis.parameters))
-    parameter_names = [p.name for p in analysis.parameters]
+        parameter_order = np.arange(len(parameters))
     distmat = scipy.spatial.distance.squareform(distances)[parameter_order, :][
         :, parameter_order
     ]
     fig = plot_matrix(
         distmat,
-        tick_labels=[parameter_names[i] for i in parameter_order],
+        tick_labels=[parameters[i] for i in parameter_order],
         cbar_label="Unsigned Cosine Distance",
         title="Correlation sensitivity vector distances",
         format_str=".2f",
