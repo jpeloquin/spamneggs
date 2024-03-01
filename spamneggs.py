@@ -2216,7 +2216,10 @@ def makefig_tsvar_line(
         vmin=min(levels[subject_parameter.name]),
         vmax=max(levels[subject_parameter.name]),
     )
-    for i in range(len(axs), n_plots):
+    i_offset = (
+        1 if named_cases is not None else 0
+    )  # offset into axes to skip named cases plot
+    for i in range(n_levels):
         fulcrum = {
             p.name: levels[p.name][i] if i < len(levels[p.name]) else None
             for p in other_parameters
@@ -2230,8 +2233,8 @@ def makefig_tsvar_line(
                 break
             m = np.logical_and(m, cases[nm] == v)
         ids = pd.unique(cases.index.get_level_values("Sample")[m])
-        # Make the plot panel
-        ax = fig.add_subplot(gs[i // nw, i % nw])
+        # Make the plot panel.
+        ax = fig.add_subplot(gs[(i + i_offset) // nw, (i + i_offset) % nw])
         axs.append(ax)
         ax.set_title(
             f"Other parameters set to level index = {i + 1}",
