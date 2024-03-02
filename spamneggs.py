@@ -1990,7 +1990,7 @@ def plot_tsvar_param_heatmap(
     t_ax = axarr[1, 0].get_position().max[1]
     t = t_ax + 0.5 * (b_ax - b_ticks)
     dn_ax = fig.add_axes((fig_llabelw / figw, b, dendro_axw / figw, t - b))
-    dn_ax.axis("off")
+    remove_spines(dn_ax)
     # Compute the linkages (clusters), unless all the distances are NaN (e.g., in a
     # univariate sensitivity analysis)
     if np.all(np.isnan(distances)):
