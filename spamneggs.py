@@ -1323,7 +1323,7 @@ def makefig_global_correlations_tsvars(
             # TODO: get the parameter order from the cluster analysis so it can be
             #  re-used for the sensitivity vectors PCA plot
             svd_data = corr_svd(correlations)
-            with open(pth_svd_data, "w") as f:
+            with open(pth_svd_data, "w", encoding="utf8") as f:
                 json.dump(svd_data, f)
             fig = fig_corr_singular_values(svd_data)
             fig.savefig(pth_svd_fig_s)
