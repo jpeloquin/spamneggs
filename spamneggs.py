@@ -1924,9 +1924,11 @@ def plot_tsvar_param_heatmap(
     parameter_names = _ordered_parameter_subset(
         pd.unique(correlations["Parameter"]), [p.name for p in analysis.parameters]
     )
-    correlations = correlations.copy().set_index(
-        ["Parameter", "Variable", "Time Point"]
-    ).sort_index()  # speed up correlations.loc[parameter, var] and avoid warning
+    correlations = (
+        correlations.copy()
+        .set_index(["Parameter", "Variable", "Time Point"])
+        .sort_index()
+    )  # speed up correlations.loc[parameter, var] and avoid warning
 
     # Widths of plot panels
     base_axw = 5.0
@@ -1977,8 +1979,16 @@ def plot_tsvar_param_heatmap(
     figw = fig.get_figwidth()
 
     # Plot dendrogram.  Do this first to get the parameter ordering.
-    t = axarr[1, 0].get_position().max[1]
-    b = axarr[-1, 0].get_position().min[1]
+    # Find the bottom edge of the bottom-most correlation vector plot's x-tick labels
+    fig.canvas.draw()
+    lowest_ax_bbox = axarr[-1, 0].get_tightbbox(for_layout_only=True)
+    fig_size_px = fig.get_size_inches() * fig.dpi
+    b_ax = axarr[-1, 0].get_position().min[1]
+    b_ticks = lowest_ax_bbox.bounds[1] / fig_size_px[1]
+    # To center the dendrogram legs on the axis labels, we need to evenly distribute the space that the tick labels occupy
+    b = 0.5 * (b_ticks + b_ax)
+    t_ax = axarr[1, 0].get_position().max[1]
+    t = t_ax + 0.5 * (b_ax - b_ticks)
     dn_ax = fig.add_axes((fig_llabelw / figw, b, dendro_axw / figw, t - b))
     dn_ax.axis("off")
     # Compute the linkages (clusters), unless all the distances are NaN (e.g., in a
