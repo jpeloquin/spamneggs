@@ -1926,7 +1926,7 @@ def plot_tsvar_param_heatmap(
     )
     correlations = correlations.copy().set_index(
         ["Parameter", "Variable", "Time Point"]
-    )
+    ).sort_index()  # speed up correlations.loc[parameter, var] and avoid warning
 
     # Widths of plot panels
     base_axw = 5.0
