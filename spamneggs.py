@@ -2189,7 +2189,7 @@ def makefig_tsvars_pdf(analysis, tsdata, sample_ids=None):
                     f"Variable {variable} has a constant value, {vmin}, so it is not appropriate to estimate its probability density function."
                 )
             yrange_all = (vmin, vmax)
-            idx_steps = tsdata_by_step.index.values
+            idx_steps = tsdata_by_step.index.unique("Step")
             quantile_levels = (0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
             quantiles = tuple([] for q in quantile_levels)
             for idx_step in idx_steps:
