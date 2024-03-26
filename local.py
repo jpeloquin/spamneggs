@@ -27,18 +27,16 @@ class LsqCostFunctionFactory:
         self.f = f
         self.callback = callback
 
-    def make_ψ(self, x0):
-        """Return cost function referenced to true parameter values x0
+    def make_ψ(self, f0):
+        """Return cost function f with respect to true parameter values x0 and f(x0)
 
-        :param x0: Vector of "true" parameter values on length n.  The returned cost
-        function will calculate cost relative to `f(x0)`.
+        :param f0: Vector of "true" values matching the length of the vector returned by
+        self.f.
 
-        :returns: Sum-squares cost function, which accepts a vector of parameters with
-        length matching x0.
+        :returns: The sum-squares error (SSE) function ψ, which accepts a vector of parameters
+        of the same length as self.f and returns a scalar (the SSE).
 
         """
-
-        f0 = self.f(x0)
 
         def ψ(x):
             # run_case verifies that must points are used and (via run_febio_checked)
