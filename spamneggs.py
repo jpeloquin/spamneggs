@@ -1301,7 +1301,7 @@ def makefig_global_correlations_tsvars(
         fig_heatmap.savefig(directory / f"{fname_prefix}heatmap_norm={norm}.svg")
         if norm == "none":
             fig_distmat = plot_tsvar_param_distmat(
-                parameter_names, distances, parameter_order
+                parameter_names, distances, "Unsigned Cosine Distance", parameter_order
             )
             fig_distmat.fig.savefig(
                 analysis.directory / f"{fname_prefix}distance_matrix_clustered.svg",
@@ -1310,6 +1310,7 @@ def makefig_global_correlations_tsvars(
             fig_distmat = plot_tsvar_param_distmat(
                 parameter_names,
                 distances,
+                "Unsigned Cosine Distance",
             )
             fig_distmat.fig.savefig(
                 analysis.directory / f"{fname_prefix}distance_matrix_unclustered.svg",
@@ -2147,7 +2148,7 @@ def plot_tsvar_param_heatmap(
 
 
 def plot_tsvar_param_distmat(
-    parameters: Sequence[str], distances, parameter_order=None
+        parameters: Sequence[str], distances, metric, parameter_order=None,
 ):
     """Plot distance matrix of tsvar–parameter correlation vectors
 
@@ -2164,7 +2165,7 @@ def plot_tsvar_param_distmat(
     fig = plot_matrix(
         distmat,
         tick_labels=[parameters[i] for i in parameter_order],
-        cbar_label="Unsigned Cosine Distance",
+        cbar_label=metric,
         title="Correlation sensitivity vector distances",
         format_str=".2f",
     )
