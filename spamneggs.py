@@ -2890,6 +2890,8 @@ def tabulate_sim(sim):
 
 def tabulate_sim_write(sim, dir_out=None):
     """Tabulate variables for single case analysis & write to disk."""
+    if dir_out is None:
+        dir_out = sim.directory
     # Find/create output directory
     dir_out = Path(dir_out)
     if not dir_out.exists():
