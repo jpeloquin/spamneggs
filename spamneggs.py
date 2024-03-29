@@ -441,7 +441,7 @@ class Sim:
         :param directory: Parent directory to which the case's files will be written.
 
         """
-        self.parameter_list = tuple(parameters)  # need to store parameter *order*
+        self.parameter_list = _init_parameters(parameters)  # need to store parameter *order*
         # Values are most frequently needed, so they get the shortest name.
         if isinstance(parameter_values, Mapping):
             values = {n: v for n, v in parameter_values.items()}
