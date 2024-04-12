@@ -546,7 +546,7 @@ def plot_neighborhood(
 
     :param θ: Parameter values about which to plot the function `f`.
 
-    :param vectors: List of two vectors [v1, v2] in parameter space.  v1 defines the
+    :param vectors: [v1, v2], a list of two vectors in parameter space.  v1 defines the
     plot's x-axis.  v2 defines the plot's y-axis.  The product of the vector and the
     `relative_extent` values define the extent of the plot.
 
