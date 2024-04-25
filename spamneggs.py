@@ -1323,9 +1323,7 @@ def makefig_global_correlations_tsvars(
         pth_svd_fig_s = directory / f"{fname_prefix}singular_values.svg"
         pth_svd_fig_v = directory / f"{fname_prefix}principal_axes.svg"
         try:
-            # TODO: get the parameter order from the cluster analysis so it can be
-            #  re-used for the sensitivity vectors PCA plot
-            svd_data = corr_svd(correlations)
+            svd_data = corr_svd(correlations, parameter_order=parameter_names)
             with open(pth_svd_data, "w", encoding="utf8") as f:
                 json.dump(svd_data, f, ensure_ascii=False)
             fig = fig_corr_singular_values(svd_data)
@@ -2434,19 +2432,32 @@ def plot_tsvar_named(
         ax.legend()
 
 
-def corr_svd(correlations_table):
+def corr_svd(correlations_table, parameter_order=None):
     """Calculate singular values and eigenvectors of parameter sensitivities"""
     correlations = correlations_table.set_index(["Parameter", "Variable", "Time Point"])
-    arr = correlations.unstack(["Variable", "Time Point"]).values
+    tab = correlations.unstack(["Variable", "Time Point"])
+    parameter_names = tab.index.tolist()
+    arr = tab.values
     m_nonnan = ~np.any(np.isnan(arr), axis=0)
     m_finite = ~np.any(np.isinf(arr), axis=0)
     arr_valid = arr[:, np.logical_and(m_nonnan, m_finite)]
     u, s, vh = np.linalg.svd(arr_valid.T, full_matrices=False)
+    # ^ vh indices: parameters, then vectors
+    singular_values = s.tolist()
+    variables = correlations.index.levels[1].values.tolist()
+    if parameter_order is not None:
+        idx_from_name = {nm: i for i, nm in enumerate(parameter_names)}
+        idx = [idx_from_name[nm] for nm in parameter_order]
+        assert all(parameter_names[i] == nm for i, nm in zip(idx, parameter_order))
+    else:
+        parameter_order = parameter_names
+        idx = [i for i in range(len(vh))]
+    principal_axes = vh[:, idx].tolist()
     svd_data = {
-        "singular values": s.tolist(),
-        "parameters": correlations.index.levels[0].values.tolist(),
-        "variables": correlations.index.levels[1].values.tolist(),
-        "principal axes": [vh[i].tolist() for i in range(len(vh))],
+        "singular values": [singular_values[i] for i in idx],
+        "parameters": parameter_order,
+        "variables": variables,
+        "principal axes": principal_axes,
     }
     return svd_data
 
