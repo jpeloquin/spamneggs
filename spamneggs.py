@@ -1318,25 +1318,25 @@ def makefig_global_correlations_tsvars(
                 analysis.directory / f"{fname_prefix}distance_matrix_unclustered.svg",
                 dpi=300,
             )
-        # Estimate the rank of the sensitivity vectors
-        pth_svd_data = directory / f"{fname_prefix}svd.json"
-        pth_svd_fig_s = directory / f"{fname_prefix}singular_values.svg"
-        pth_svd_fig_v = directory / f"{fname_prefix}principal_axes.svg"
-        try:
-            svd_data = corr_svd(correlations, parameter_order=parameter_names)
-            with open(pth_svd_data, "w", encoding="utf8") as f:
-                json.dump(svd_data, f, ensure_ascii=False)
-            fig = fig_corr_singular_values(svd_data)
-            fig.savefig(pth_svd_fig_s)
-            fig = fig_corr_eigenvectors(svd_data)
-            fig.savefig(pth_svd_fig_v)
-        except np.linalg.LinAlgError as e:
-            warn(f"Correlation matrix SVD failed: {str(e)}")
-            # Don't leave files from a previous run (if any); that would confuse the user
-            # TODO: Old files should be cleaned up at the beginning of a run
-            pth_svd_data.unlink(missing_ok=True)
-            pth_svd_fig_s.unlink(missing_ok=True)
-            pth_svd_fig_v.unlink(missing_ok=True)
+    # Estimate the rank of the sensitivity vectors
+    pth_svd_data = directory / f"{fname_prefix}svd.json"
+    pth_svd_fig_s = directory / f"{fname_prefix}singular_values.svg"
+    pth_svd_fig_v = directory / f"{fname_prefix}principal_axes.svg"
+    try:
+        svd_data = corr_svd(correlations, parameter_order=parameter_names)
+        with open(pth_svd_data, "w", encoding="utf8") as f:
+            json.dump(svd_data, f, ensure_ascii=False)
+        fig = fig_corr_singular_values(svd_data)
+        fig.savefig(pth_svd_fig_s)
+        fig = fig_corr_eigenvectors(svd_data)
+        fig.savefig(pth_svd_fig_v)
+    except np.linalg.LinAlgError as e:
+        warn(f"Correlation matrix SVD failed: {str(e)}")
+        # Don't leave files from a previous run (if any); that would confuse the user
+        # TODO: Old files should be cleaned up at the beginning of a run
+        pth_svd_data.unlink(missing_ok=True)
+        pth_svd_fig_s.unlink(missing_ok=True)
+        pth_svd_fig_v.unlink(missing_ok=True)
 
 
 def makefig_error_counts(analysis):
