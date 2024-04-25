@@ -1666,8 +1666,6 @@ def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
     """Plot sensitivity of each time series variable to each parameter"""
     if sample_ids is None:
         sample_ids = _default_sample_ids(analysis)
-    makefig_tsvars_line(analysis, tsdata, sample_ids)
-    makefig_tsvars_pdf(analysis, tsdata, sample_ids)
 
     # Obtain reference case for time series variables' correlation heatmap
     # TODO: The heat map figure should probably indicate which case is
@@ -1703,6 +1701,12 @@ def makefig_sensitivity_tsvar_all(analysis, tsdata, sample_ids=None):
             analysis.directory,
             f"tsvar_param_corr={nm_corr}_",
         )
+
+    # One-at-a-time sensitivity plots
+    makefig_tsvars_line(analysis, tsdata, sample_ids)
+
+    # PDF plots
+    makefig_tsvars_pdf(analysis, tsdata, sample_ids)
 
 
 def makefig_sobol_tsvars(analysis, S1, ST, rep_tsvalues):
