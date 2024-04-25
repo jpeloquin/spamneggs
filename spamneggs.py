@@ -1167,7 +1167,7 @@ def tab_tsvars_corrmap(analysis, tsdata: Dict[str, TSVarData], fun_corr=corr_pea
                     data.xs(i, level="Step"), f"{p.name} [param]", f"{v} [var]"
                 )
                 corr_vectors[(p.name, v)][i] = ρ
-    correlations = DataFrame(corr_vectors).stack(dropna=False)
+    correlations = DataFrame(corr_vectors).stack(future_stack=True)
     correlations.index.set_names(["Time Point", "Variable"], inplace=True)
     correlations = correlations.melt(
         ignore_index=False, var_name="Parameter", value_name="Correlation Coefficient"
