@@ -744,12 +744,17 @@ def _merge_tsdata_params(analysis, tstable):
 
 
 def _update_table_status(table: DataFrame, output, step=None):
-    """Transfer sim status from do_parallel to a sims table"""
+    """Transfer sim status from do_parallel to a sims table
+
+    :param table: Table one column per parameter and a "Status" column.  The index
+    must be set such that the row IDs match the tags in `output`.
+
+    """
     if step is not None:
         prefix = f"{step}: "
     else:
         prefix = ""
-    for (group, generator, ix), err in output:
+    for id_, err in output:
         if err == SUCCESS:
             msg = f"{prefix}{err}"
         else:
@@ -760,7 +765,7 @@ def _update_table_status(table: DataFrame, output, step=None):
             except TypeError:
                 errors = [err]
             msg = f"{prefix}{', '.join(e.__class__.__name__ for e in errors)}"
-        table.loc[(group, generator, ix), "Status"] = msg
+        table.loc[id_, "Status"] = msg
 
 
 def _init_parameters(parameters):
@@ -870,7 +875,9 @@ def sims_table(analysis: Analysis, sims):
     return tab
 
 
-def do_parallel(sims: Iterable[Tuple[object, Sim]], fun, on_error: OnSimError, pool):
+def do_parallel(
+    sims: Iterable[Tuple[object, Sim]], fun: Callable, on_error: OnSimError, pool
+):
     """Apply function to simulations in parallel
 
     :param sims: Iterable of (tag, Sim) tuples.  The tag is some kind of identifier
@@ -883,6 +890,10 @@ def do_parallel(sims: Iterable[Tuple[object, Sim]], fun, on_error: OnSimError, p
         is `spam.Success`, a `spamneggs.CaseGenerationError`,
         a `waffleiron.febio.CheckError`, or a derived class of the above.  The tag is
         included so that the functions may be evaluated out of order without issue.
+
+    :param on_error: Action to take on an exception. OnSimError.STOP = immediately
+    stop processing.  OnSimError.HOLD and OnSimError.CONTINUE = continue processing
+    and attempt to process all simulations.
 
     :return: List of (tag, fun return value) tuples.
 
@@ -976,15 +987,15 @@ def _format_fname(s):
     return s.replace(" ", "_")
 
 
-def _run_sim(tag, case):
-    """Run a case's simulations and check its output as part of a sensitivity analysis
+def run_sim(tag, sim):
+    """Simulate a sample and check its output as part of a sensitivity analysis
 
     This function is meant to be used with parallel execution in which the results
     may be returned out of order, which is why the tag is included in the return value.
 
     """
     try:
-        status = case.run(raise_on_check_fail=False)
+        status = sim.run(raise_on_check_fail=False)
     except FEBioError as e:
         status = [e]
     if status != SUCCESS:
@@ -1054,7 +1065,7 @@ def run_sensitivity(
     analysis.write_sims_table(table)
 
     # Run the cases
-    output = do_parallel(sims, _run_sim, on_error=on_error, pool=pool)
+    output = do_parallel(sims, run_sim, on_error=on_error, pool=pool)
     _update_table_status(table, output, step="Run")
     analysis.write_sims_table(table)
 
