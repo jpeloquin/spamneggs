@@ -2465,7 +2465,7 @@ def corr_svd(correlations_table, parameter_order=None):
         idx = [i for i in range(len(vh))]
     principal_axes = vh[:, idx].tolist()
     svd_data = {
-        "singular values": [singular_values[i] for i in idx],
+        "singular values": singular_values,
         "parameters": parameter_order,
         "variables": variables,
         "principal axes": principal_axes,
