@@ -1,0 +1,11 @@
+lxml
+matplotlib
+numdifftools
+numpy
+pandas
+pathos
+pingouin
+pint
+psutil
+scikit_learn
+scipy
