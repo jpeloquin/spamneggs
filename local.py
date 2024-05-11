@@ -30,11 +30,11 @@ class LsqCostFunctionFactory:
     def make_ψ(self, f0):
         """Return cost function f with respect to true parameter values x0 and f(x0)
 
-        :param f0: Vector of "true" values matching the length of the vector returned by
-        self.f.
+        :param f0: Vector of "true" values matching the length of the vector returned
+        by self.f.
 
-        :returns: The sum-squares error (SSE) function ψ, which accepts a vector of parameters
-        of the same length as self.f and returns a scalar (the SSE).
+        :returns: The sum-squares error (SSE) function ψ, which accepts a vector of
+        parameters of the same length as self.f and returns a scalar (the SSE).
 
         """
 
