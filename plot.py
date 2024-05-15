@@ -349,7 +349,7 @@ def plot_sample_eigenvalues_line(
     return FigResult(fig, ax)
 
 
-def plot_eigenvalues_pdfs(eigenvalues, errors={}):
+def plot_samples_eigenvalues(eigenvalues, errors={}):
     """Return figure with probability distributions of eigenvalues
 
     :param eigenvalues: Matrix of eigenvalues with shape (# of eigenvalues,
@@ -360,41 +360,25 @@ def plot_eigenvalues_pdfs(eigenvalues, errors={}):
     :param ylabel: y-axis label for plot
     """
     nv, ns = eigenvalues.shape
-    f = fig_template_axarr(nv, 1)
-    sz_in = f.fig.get_size_inches()
-    f.fig.set_size_inches((2.5 * sz_in[0], sz_in[1]))
-    smallest = np.min(np.abs(eigenvalues))
+    fig = Figure(constrained_layout=True)
+    fig.set_size_inches((1 + 0.5 * nv, 4))
+    ax = fig.subplots()
+    for k in ax.spines:
+        ax.spines[k].set_visible(False)
+    ax.set_xlabel("Eigenvector Index")
+    ax.set_ylabel("Eigenvvalue")
+    ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(np.arange(1, nv + 1)))
     for i, x in enumerate(eigenvalues[:]):
-        ax = f.axarr[i, 0]
-        ax.sharex(f.axarr[0, 0])
-        ax.set_xlabel(f"Eigenvalue {i + 1}", fontsize=FONTSIZE_AXLABEL)
-        ax.vlines(x, ymin=-1, ymax=1, color="black")
-        ax.set_ylim((-1, 1))
-        ax.yaxis.set_major_locator(mpl.ticker.NullLocator())
-        for k in ax.spines:
-            ax.spines[k].set_visible(False)
-        # TODO: Can I get a Gaussian KDE plot in here?  The symlog axis makes it
-        #  challenging.
-        ax.set_xscale("symlog", linthresh=smallest)
-    legend_handles = _eigenvalue_error_styles(errors)
-    for i, (k, v) in enumerate(errors.items()):
-        f.axarr[0, 0].legend(
-            handles=legend_handles,
-            loc="upper left",
-            fontsize=FONTSIZE_TICKLABEL,
-            ncol=2,
-        )
-        if not hasattr(v, "__iter__"):
-            v = len(eigenvalues) * (v,)
-        for j in range(len(f.axarr)):
-            f.axarr[j, 0].vlines(
-                v[j],
-                ymin=-1,
-                ymax=1,
-                color=legend_handles[i].get_color(),
-                linestyle=":",
-            )
-    return f
+        ax.hlines(x, xmin=1 + i - 0.45, xmax=1 + i + 0.45, color="black")
+    ax.axhline(0.0, linestyle="-", linewidth=0.7, color="dimgray", zorder=0)
+    ax.axhline(0.01, linestyle=":", color="tab:green")
+    ax.text(
+        0.55, 0.014, "Numerical error magnitude", horizontalalignment="left", fontsize=8
+    )
+    ax.set_xlim([0.5, nv + 0.5])
+    smallest = np.min(np.abs(eigenvalues))
+    ax.set_yscale("symlog", linthresh=smallest)
+    return fig
 
 
 def plot_matrix(
