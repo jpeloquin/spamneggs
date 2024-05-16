@@ -93,6 +93,11 @@ class OnSimError(Enum):
     HOLD = 2
     CONTINUE = 3
 
+    @classmethod
+    def from_str(cls, s: str):
+        """Return enum from string label (can be lowercase)"""
+        return cls[s.upper()]
+
 
 class CaseGenerationError(Exception):
     """Raise when case generation terminates in an error."""
@@ -1018,6 +1023,10 @@ def run_sensitivity(
     CaseGenerationError, or running a simulation raises .
 
     """
+    # Validate `on_error` argument
+    if isinstance(on_error, str):
+        on_error = OnSimError.from_str(on_error)
+
     # ProcessPool allows parallel model generation but is worse than ThreadPool for
     # debugging.  ThreadPool is fine when the parallel work is all in FEBio.
     pool = ProcessPool(nodes=num_workers)
