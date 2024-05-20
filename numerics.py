@@ -1,8 +1,9 @@
 """Numerical analysis of functions"""
 
 import functools
+from functools import partial
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from matplotlib.figure import Figure
 import numdifftools as nd
@@ -316,7 +317,8 @@ def add_counter(f, counter: Counter):
 def run_step_size_check(
     parameter_defs,
     samples,
-    make_f,
+    f: Callable,
+    make_ψ: Callable,
     steps,
     scale_parameters,
     unscale_parameters,
@@ -328,16 +330,19 @@ def run_step_size_check(
 
     :param samples: Sequence of tuple-like parameter values.
 
-    :param make_f: Function of the parameter values for the current sample → a
-    function of parameter values that returns a scalar.  This structure allows the
-    step size check to evaluate cost functions that depend on both the finite
-    difference derivative support points and the sample point.
+    :param f: Model function.  Must be consistent with make_ψ.
+
+    :param make_ψ: Constructor of the cost function of (f, f_true)  where f is the model function and f_true is the vector of "true" observation for the parameter values of
+    the current sample → a function of parameter values that returns a scalar.  This
+    structure allows the step size check to evaluate cost functions that depend on both
+    the finite difference derivative support points and the sample point.
 
     :param steps: Sequence of step sizes to sweep across, ordered small to large.
 
     :param scale_parameters:
 
     :param unscale_parameters:
+
     """
     dir_out.mkdir(exist_ok=True)
     dir_Δ = dir_out / "sample_plots_incremental_Δ"
@@ -345,7 +350,7 @@ def run_step_size_check(
     dir_err = dir_out / "sample_plots_error"
     dir_err.mkdir(exist_ok=True)
 
-    def Hs(xs, h):
+    def Hs(ψs, xs, h):
         return nd.Hessian(ψs, method="central", step=h)(xs)
 
     rows = []
@@ -354,13 +359,14 @@ def run_step_size_check(
         row = {"Sample": i, "Evals": 0, "Result": ""}
         for p, v in zip(parameter_defs, x0):
             row[parameter_to_str(p)] = v
-        evals = Counter(1)  # include initial f(x0) evaluation
+        evals = Counter()
+        f_counted = add_counter(f, evals)
         try:
-            f = make_f(x0)
-            fs = scaled_args(f, unscale_parameters)
-            ψs = add_counter(fs, evals)
+            f0 = f_counted(x0)
+            fs = scaled_args(f_counted, unscale_parameters)
+            ψs = make_ψ(fs, f0)
             x0s = scale_parameters(x0)
-            sweep = StepSweep(Hs, x0s, steps)
+            sweep = StepSweep(partial(Hs, ψs), x0s, steps)
         except (FEBioError, CheckError) as e:
             row["Result"] = e.__class__.__name__
             continue

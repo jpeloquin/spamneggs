@@ -28,27 +28,48 @@ class LsqCostFunctionFactory:
         self.callback = callback
 
     def make_ψ(self, f0):
-        """Return cost function f with respect to true parameter values x0 and f(x0)
+        """Return SSE cost function with respect to "true" observations f0
 
-        :param f0: Vector of "true" values matching the length of the vector returned
-        by self.f.
+        :param f0: Vector of "true" values matching the length of the vector returned by
+        self.f.
 
-        :returns: The sum-squares error (SSE) function ψ, which accepts a vector of
-        parameters of the same length as self.f and returns a scalar (the SSE).
+        :returns: The sum-squares error (SSE) function ψ, which accepts a vector of parameters
+        of the same length as self.f and returns a scalar (the SSE).
 
         """
 
-        def ψ(x):
-            # run_case verifies that must points are used and (via run_febio_checked)
-            # that FEBio observed them, so we don't need to check for mismatched times
-            f_value = self.f(x)
-            se = np.atleast_1d(np.array((f_value - f0) ** 2))  # ensure iterable
-            cost = math.fsum(se)
+        def ψ_with_callback(x):
+            ψ = make_sse_cost(self.f, f0)
+            cost = ψ(x)
             if self.callback is not None:
                 self.callback(x, cost)
             return cost
 
-        return ψ
+        return ψ_with_callback
+
+
+def make_sse_cost(f, f0):
+    """Return SSE cost function with respect to "true" observations f0
+
+    :param f: Function f(θ) to evaluate the model, where θ is the model parameters.
+
+    :param f0: Vector of "true" values matching the length of the vector returned by
+    f.
+
+    :returns: The sum-squares error (SSE) function ψ(θ), with θ having the same
+    meaning as in f(θ).  Returns a scalar (the SSE).
+
+    """
+
+    def ψ(x):
+        # run_case verifies that must points are used and (via run_febio_checked)
+        # that FEBio observed them, so we don't need to check for mismatched times
+        f_value = f(x)
+        se = np.atleast_1d(np.array((f_value - f0) ** 2))  # ensure iterable
+        cost = math.fsum(se)
+        return cost
+
+    return ψ
 
 
 def plot_sample(analysis, id_label, Hs, H, Herr=None):
