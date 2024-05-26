@@ -71,7 +71,7 @@ class EvaluationDB:
     @classmethod
     def _decode_x(cls, s):
         bytes_key = base64.decodebytes(s)
-        return struct.unpack(f"<{len(bytes_key // 8)}d", bytes_key)
+        return struct.unpack(f"<{len(bytes_key) // 8}d", bytes_key)
 
     def get_eval_ids(self):
         return sorted([int(i) for i in self.root["eval_info"].keys()])
