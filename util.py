@@ -124,7 +124,9 @@ class EvaluationDB:
         x_hash = self._encode_x(x)
         # Update map parameter value hash ID → evaluation integer ID.  (One to many.)
         if x_hash in self.root["eval_id_from_x"]:
-            self.root["eval_id_from_x"][x_hash] = list(self.root["eval_id_from_x"][x_hash]) + [id_]
+            self.root["eval_id_from_x"][x_hash] = list(
+                self.root["eval_id_from_x"][x_hash]
+            ) + [id_]
         else:
             self.root["eval_id_from_x"][x_hash] = [id_]
         # Parameters → output values hashmap
