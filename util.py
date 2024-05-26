@@ -54,8 +54,12 @@ class EvaluationDB:
         self.store.db.isolation_level = "DEFERRED"
         self.root = zarr.open(self.store, mode=mode)
         if not self.root.read_only:
+            # Map of parameter value hash → model evaulation output
             self.root.create_group("eval_values")
+            # Metadata for one function evaluation
             self.root.create_group("eval_info")
+            # Map of parameter value hash → evaluation integer ID.  (One to many.)
+            self.root.create_group("eval_id_from_x")
         self._finalizer = weakref.finalize(self, self.store.close)
 
     @classmethod
@@ -77,11 +81,19 @@ class EvaluationDB:
         x = self.root["eval_info"][id_]["x"]
         return self.get_output_by_x(x)
 
-    def get_output_by_x(self, x):
-        return np.array(self.root["eval_values"][self._encode_x(x)])
+    def get_eval_by_id(self, id_):
+        return self.root["eval_info"][id_]
 
-    def write_eval(self, id_, x, output):
-        k = self._encode_x(x)
+    def get_eval_by_x(self, x):
+        x_hash = self._encode_x(x)
+        id_ = self.root["eval_id_from_x"][x_hash]
+        return self.get_eval_by_id(id_)
+
+    def get_output_by_x(self, x):
+        x_hash = self._encode_x(x)
+        return np.array(self.root["eval_values"][x_hash])
+
+    def write_eval(self, id_, x, y, mdata={}):
         # Consider doing something useful if output already exists but new output
         # differs from the old.  A model evaluation might differ from run to run
         # because the evaluation is not fully reproducible (deterministic), the model
@@ -105,8 +117,18 @@ class EvaluationDB:
         )
         self.root["eval_info"][id_]["call_chain"] = callers
         self.root["eval_info"][id_]["x"] = x
+        # Evaluation optional metadata (usually file paths or alternate IDs)
+        for k, v in mdata.items():
+            self.root["eval_info"][id_][k] = v
+        # Create hash ID for parameter values
+        x_hash = self._encode_x(x)
+        # Update map parameter value hash ID → evaluation integer ID.  (One to many.)
+        if x_hash in self.root["eval_id_from_x"]:
+            self.root["eval_id_from_x"][x_hash] = list(self.root["eval_id_from_x"][x_hash]) + [id_]
+        else:
+            self.root["eval_id_from_x"][x_hash] = [id_]
         # Parameters → output values hashmap
-        self.root["eval_values"][k] = output
+        self.root["eval_values"][x_hash] = y
         self.store.db.commit()
 
 
