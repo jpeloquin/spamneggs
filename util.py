@@ -39,7 +39,8 @@ class EvaluationDB:
     An EvaluationDB logs model evaluations for a specific model.  The model evaluations
     must have identifical inputs except for the their parameter values, which are
     provided to EvaluationDB when the evaluation is logged.  Multiple analyses can
-    therefore use the same EvaluationDB instance.
+    therefore store data in the same EvaluationDB instance as long as they use the same
+    model.
 
     """
 
