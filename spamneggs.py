@@ -1480,6 +1480,9 @@ def makefig_error_pdf_uniparam(analysis):
     nh = len(error_codes) + 1  # Extra row for union of all error codes
     fig.set_size_inches((3.5 * nw + 0.25, 3.2 * nh + 0.25))  # TODO: set common style
     gs = GridSpec(nh, nw, figure=fig)
+    # keep track of global y-axis limits
+    p_gmax = 0
+    all_axes = []
     for i, param in enumerate(analysis.parameters):
         for j in range(nh):
             if j == 0:
@@ -1507,18 +1510,27 @@ def makefig_error_pdf_uniparam(analysis):
                 color="dimgray",
                 labelcolor="dimgray",
             )
-            ax.set_ylabel(f"P( {e} | {param} )", fontsize=FONTSIZE_AXLABEL)
+            ax.set_ylabel(f"p( {e} | {param} )", fontsize=FONTSIZE_AXLABEL)
             ax.tick_params(
                 axis="y",
                 labelsize=FONTSIZE_TICKLABEL,
                 color="dimgray",
                 labelcolor="dimgray",
             )
-            ax.set_ylim([0, 1])
+            # Prepare for setting y-axis scale
+            p_gmax = max([p_gmax, np.nanmax(p)])
+            all_axes.append(ax)
+            # Style axes
             for k in ax.spines:
                 ax.spines[k].set_visible(False)
             ax.set_facecolor("#F6F6F6")
-    fig.savefig(analysis.directory / f"run_error_probability_uniparameter.svg")
+    fig.savefig(analysis.directory / f"run_error_probability_uniparameter_-_free_axes.svg")
+    # Set a common y-axis scale
+    if p_gmax == 0:
+        p_gmax = 1
+    for ax in all_axes:
+        ax.set_ylim([0, p_gmax])
+    fig.savefig(analysis.directory / f"run_error_probability_uniparameter_-_shared_axes.svg")
 
 
 def makefig_error_pdf_biparam(analysis):
@@ -1551,6 +1563,7 @@ def makefig_error_pdf_biparam(analysis):
                     p[i, j] = np.sum(cases[error_code][m]) / n
         return x, p
 
+    # TODO: Add an "any error" plot
     for e in error_codes:
         # Create figure with probability density function plots
         fig = Figure(constrained_layout=True)
@@ -1563,11 +1576,13 @@ def makefig_error_pdf_biparam(analysis):
             (3.4 * nw + 0.25, 2.5 * nh + 0.25)
         )  # TODO: set common style
         gs = GridSpec(nh, nw, figure=fig)
+        all_obj = []  # tuple(ax, pcolormesh, cbar)
+        p_gmax = 0
         for j, p1 in enumerate(analysis.parameters):  # columns
             for i, p2 in enumerate(analysis.parameters):  # rows
                 ax = fig.add_subplot(gs[i, j])
-                x, p = p_error(cases, e, p1, levels[p1], p2, levels[p2])
-                # warning: pcolormesh maps i → y and j → x
+                _, p = p_error(cases, e, p1, levels[p1], p2, levels[p2])
+                # pcolormesh maps i → y and j → x
                 pcm = ax.pcolormesh(
                     levels[p1],
                     levels[p2],
@@ -1575,10 +1590,9 @@ def makefig_error_pdf_biparam(analysis):
                     shading="nearest",
                     cmap="cividis",
                     vmin=0,
-                    vmax=1,
                 )
-                # TODO: Place colorbar manually; it seems that doing it automatically
-                #  is slow
+                # TODO: Place colorbar manually; it seems that doing it automatically is
+                #  slow
                 cbar = fig.colorbar(pcm, ax=ax)
                 cbar.set_label(f"P( {e} )", fontsize=FONTSIZE_TICKLABEL)
                 cbar.ax.tick_params(labelsize=FONTSIZE_TICKLABEL)
@@ -1598,10 +1612,20 @@ def makefig_error_pdf_biparam(analysis):
                     color="dimgray",
                     labelcolor="dimgray",
                 )
-                # for k in ax.spines:
-                #     ax.spines[k].set_visible(False)
+                # Prepare for setting common color scale
+                p_gmax = max([p_gmax, np.nanmax(p)])
+                all_obj.append((ax, pcm, cbar))
         fig.savefig(
-            analysis.directory / f"run_error_probability_biparameter_-_error={e}.svg"
+            analysis.directory / f"run_error_probability_biparameter_-_error={e}_-_free_axes.svg"
+        )
+        # Set a common y-axis scale
+        if p_gmax == 0:
+            p_gmax = 1
+        for _, pcm, cbar in all_obj:
+            pcm.set_clim(vmin=0, vmax=p_gmax)
+            cbar.update_normal(pcm)
+        fig.savefig(
+            analysis.directory / f"run_error_probability_biparameter_-_error={e}_-_shared_axes.svg"
         )
 
 
