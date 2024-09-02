@@ -1524,13 +1524,17 @@ def makefig_error_pdf_uniparam(analysis):
             for k in ax.spines:
                 ax.spines[k].set_visible(False)
             ax.set_facecolor("#F6F6F6")
-    fig.savefig(analysis.directory / f"run_error_probability_uniparameter_-_free_axes.svg")
+    fig.savefig(
+        analysis.directory / f"run_error_probability_uniparameter_-_free_axes.svg"
+    )
     # Set a common y-axis scale
     if p_gmax == 0:
         p_gmax = 1
     for ax in all_axes:
         ax.set_ylim([0, p_gmax])
-    fig.savefig(analysis.directory / f"run_error_probability_uniparameter_-_shared_axes.svg")
+    fig.savefig(
+        analysis.directory / f"run_error_probability_uniparameter_-_shared_axes.svg"
+    )
 
 
 def makefig_error_pdf_biparam(analysis):
@@ -1616,7 +1620,8 @@ def makefig_error_pdf_biparam(analysis):
                 p_gmax = max([p_gmax, np.nanmax(p)])
                 all_obj.append((ax, pcm, cbar))
         fig.savefig(
-            analysis.directory / f"run_error_probability_biparameter_-_error={e}_-_free_axes.svg"
+            analysis.directory
+            / f"run_error_probability_biparameter_-_error={e}_-_free_axes.svg"
         )
         # Set a common y-axis scale
         if p_gmax == 0:
@@ -1625,7 +1630,8 @@ def makefig_error_pdf_biparam(analysis):
             pcm.set_clim(vmin=0, vmax=p_gmax)
             cbar.update_normal(pcm)
         fig.savefig(
-            analysis.directory / f"run_error_probability_biparameter_-_error={e}_-_shared_axes.svg"
+            analysis.directory
+            / f"run_error_probability_biparameter_-_error={e}_-_shared_axes.svg"
         )
 
 
