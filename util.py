@@ -43,23 +43,26 @@ class EvaluationDB:
 
     """
 
-    def __init__(self, pth, mode="r+"):
-        """Read SQLite store and return EvaluationDB
+    def __init__(self, pth, mode="a"):
+        """Return EvaluationDB backed by Zarr DirectoryStore
 
-        :param mode: Passed to zarr.open.  Default = "r+", which means read/write,
-        file must exist.  Read-only is "r".
+        :param mode: Passed to zarr.open.  Default = "a", which means read/write,
+        create if doesn't exist.  Read-only is "r".
+
+        A Zarr DirectoryStore can be written to by multiple threads or processes,
+        but there is no mechanism to prevent two writes from modifying the same chunk
+        at the same time.
 
         """
-        self.store = zarr.SQLiteStore(pth)
-        self.store.db.isolation_level = "DEFERRED"
+        self.store = zarr.DirectoryStore(pth)
         self.root = zarr.open(self.store, mode=mode)
         if not self.root.read_only:
-            # Map of parameter value hash → model evaulation output
-            self.root.create_group("eval_values")
+            # Map of parameter value hash → model evaluation output
+            self.root.require_group("eval_values")
             # Metadata for one function evaluation
-            self.root.create_group("eval_info")
+            self.root.require_group("eval_info")
             # Map of parameter value hash → evaluation integer ID.  (One to many.)
-            self.root.create_group("eval_id_from_x")
+            self.root.require_group("eval_id_from_x")
         self._finalizer = weakref.finalize(self, self.store.close)
 
     @classmethod
@@ -131,7 +134,6 @@ class EvaluationDB:
             self.root["eval_id_from_x"][x_hash] = [id_]
         # Parameters → output values hashmap
         self.root["eval_values"][x_hash] = y
-        self.store.db.commit()
 
 
 def parameter_to_str(parameter):
