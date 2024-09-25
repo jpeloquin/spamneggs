@@ -97,12 +97,22 @@ class EvaluationDB:
         return np.array(self.root["eval_values"][x_hash])
 
     def write_eval(self, id_, x, y, mdata={}):
+        """Store input & output of a given model evaluation
+
+        :param id_: Identifier for the model evaluation.  The type can be either str or
+        int; it is not checked.
+
+        """
         # Consider doing something useful if output already exists but new output
         # differs from the old.  A model evaluation might differ from run to run
         # because the evaluation is not fully reproducible (deterministic), the model
         # definition changed, or the run environment changed.  Only a change in the
         # model definition is unambiguously a problem.  Best to do this check in the
         # caller, which has more context.
+
+        # TODO: Allow repeat evals
+
+        # TODO: Allow multiple output variables
 
         # Call count
         self.root["eval_info"].create_group(id_)
