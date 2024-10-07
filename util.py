@@ -102,6 +102,10 @@ class EvaluationDB:
         :param id_: Identifier for the model evaluation.  The type can be either str or
         int; it is not checked.
 
+        :param x: Parameter values.
+
+        :param y: Model output values.
+
         """
         # Consider doing something useful if output already exists but new output
         # differs from the old.  A model evaluation might differ from run to run
@@ -143,7 +147,12 @@ class EvaluationDB:
         else:
             self.root["eval_id_from_x"][x_hash] = [id_]
         # Parameters → output values hashmap
-        self.root["eval_values"][x_hash] = y
+        if hasattr(y, "__getitem__"):
+            for k in y:
+                self.root["eval_values"].require_group(x_hash, overwrite=True)
+                self.root["eval_values"][x_hash][k] = y[k]
+        else:
+            self.root["eval_values"][x_hash] = y
 
 
 def parameter_to_str(parameter):
