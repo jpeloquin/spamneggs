@@ -120,8 +120,6 @@ class EvaluationDB:
 
         # TODO: Allow repeat evals
 
-        # TODO: Allow multiple output variables
-
         # Call count
         self.root["eval_info"].create_group(id_)
         # Call stack
