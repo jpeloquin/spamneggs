@@ -51,7 +51,7 @@ class EvaluationDB:
         """Return EvaluationDB backed by Zarr DirectoryStore
 
         :param mode: Passed to zarr.open.  Default = "a", which means read/write,
-        create if doesn't exist.  Read-only is "r".
+        create if the file doesn't exist.  Read-only is "r".
 
         A Zarr DirectoryStore can be written to by multiple threads or processes,
         but there is no mechanism to prevent two writes from modifying the same chunk
@@ -71,46 +71,63 @@ class EvaluationDB:
 
     @classmethod
     def _encode_x(cls, x):
+        """Encode parameter values in byte array
+
+        The byte array is primarily used as a hash/ID to look up the corresponding
+        evaluation data.
+        """
         bytes_key = struct.pack("<" + "d" * len(x), *x)
         string_key = base64.encodebytes(bytes_key)
         return string_key
 
     @classmethod
     def _decode_x(cls, s):
+        """Decode parameter values from byte array
+
+        The byte array is primarily used as a hash/ID to look up the corresponding
+        evaluation data.
+        """
         bytes_key = base64.decodebytes(s)
         return struct.unpack(f"<{len(bytes_key) // 8}d", bytes_key)
 
     def get_eval_ids(self):
+        """Return all evaluation IDs"""
         return sorted([int(i) for i in self.root["eval_info"].keys()])
 
     def get_output_by_id(self, id_):
+        """Return output variables' values for an evaluation ID"""
         id_ = str(id_)
         x = self.root["eval_info"][id_]["x"]
         return self.get_output_by_x(x)
 
+    def get_output_by_x(self, x):
+        """Return output variables' values for a list of parameter values"""
+        x_hash = self._encode_x(x)
+        return np.array(self.root["eval_values"][x_hash])
+
     def get_eval_by_id(self, id_):
+        """Return evaluation data structure for an evaluation ID"""
         return self.root["eval_info"][id_]
 
     def get_eval_by_x(self, x):
+        """Return evaluation data structure for a list of parameter values"""
         x_hash = self._encode_x(x)
         id_ = self.root["eval_id_from_x"][x_hash]
         return self.get_eval_by_id(id_)
 
-    def get_output_by_x(self, x):
-        x_hash = self._encode_x(x)
-        return np.array(self.root["eval_values"][x_hash])
-
     def write_eval(self, id_, x, y, mdata={}):
         """Store input & output of a given model evaluation
 
-        :param id_: Identifier for the model evaluation.  The type can be either str or
-        int; it is not checked.
+        :param id_: Identifier for the model evaluation.  The type can be either str
+        or int; it is not checked.
 
-        :param x: Parameter values.
+        :param x: Input parameters' values.
 
-        :param y: Model output values.
+        :param y: Output variables' values corresponding to `x`.
 
         """
+        # TODO: Do we really need to require an ID?
+
         # Consider doing something useful if output already exists but new output
         # differs from the old.  A model evaluation might differ from run to run
         # because the evaluation is not fully reproducible (deterministic), the model
@@ -118,7 +135,7 @@ class EvaluationDB:
         # model definition is unambiguously a problem.  Best to do this check in the
         # caller, which has more context.
 
-        # TODO: Allow repeat evals
+        # TODO: Allow repeat evals (would force change in primary key)
 
         # Call count
         self.root["eval_info"].create_group(id_)
