@@ -11,11 +11,12 @@ import struct
 import threading
 import weakref
 from functools import wraps
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Dict, Union
 
 import numcodecs
 import numpy as np
 import scipy
+from uuid_utils import uuid7
 import zarr
 
 
@@ -47,7 +48,7 @@ class EvaluationDB:
 
     """
 
-    def __init__(self, pth, mode="a"):
+    def __init__(self, pth, parameters: List[str], variables: List[str], mode="a"):
         """Return EvaluationDB backed by Zarr DirectoryStore
 
         :param mode: Passed to zarr.open.  Default = "a", which means read/write,
@@ -61,10 +62,12 @@ class EvaluationDB:
         self.store = zarr.DirectoryStore(pth)
         self.root = zarr.open(self.store, mode=mode)
         if not self.root.read_only:
-            # Map of parameter value hash → model evaluation output
-            self.root.require_group("eval_values")
-            # Metadata for one function evaluation
-            self.root.require_group("eval_info")
+            # List of parameter names
+            self.root["parameter_names"] = parameters
+            # List of variable names
+            self.root["variable_names"] = variables
+            # Map of eval ID → eval record for one model evaluation
+            self.root.require_group("eval")
             # Map of parameter value hash → evaluation integer ID.  (One to many.)
             self.root.require_group("eval_id_from_x")
         self._finalizer = weakref.finalize(self, self.store.close)
@@ -92,86 +95,102 @@ class EvaluationDB:
 
     def get_eval_ids(self):
         """Return all evaluation IDs"""
-        return sorted([int(i) for i in self.root["eval_info"].keys()])
+        return sorted([int(i) for i in self.root["eval"].keys()])
 
-    def get_output_by_id(self, id_):
-        """Return output variables' values for an evaluation ID"""
-        id_ = str(id_)
-        x = self.root["eval_info"][id_]["x"]
-        return self.get_output_by_x(x)
+    def get_evals(self, x):
+        """Return evaluation records for parameter values"""
+        x_bytes = self._encode_x(x)
+        ids = self.root["eval_id_from_x"][x_bytes]
+        return {id_: self.root["eval"][id_] for id_ in ids}
 
-    def get_output_by_x(self, x):
-        """Return output variables' values for a list of parameter values"""
-        x_hash = self._encode_x(x)
-        return np.array(self.root["eval_values"][x_hash])
+    def get_eval_output(self, x):
+        """Return output variables' values for parameter values"""
+        x_bytes = self._encode_x(x)
+        ids = self.root["eval_id_from_x"][x_bytes]
+        return {id_: self.root["eval"][id_]["y"] for id_ in ids}
 
-    def get_eval_by_id(self, id_):
-        """Return evaluation data structure for an evaluation ID"""
-        return self.root["eval_info"][id_]
-
-    def get_eval_by_x(self, x):
-        """Return evaluation data structure for a list of parameter values"""
-        x_hash = self._encode_x(x)
-        id_ = self.root["eval_id_from_x"][x_hash]
-        return self.get_eval_by_id(id_)
-
-    def write_eval(self, id_, x, y, mdata={}):
-        """Store input & output of a given model evaluation
-
-        :param id_: Identifier for the model evaluation.  The type can be either str
-        or int; it is not checked.
+    def _initialize_eval_record(self, x, mdata={}):
+        """Initialize a record for a new evaluation
 
         :param x: Input parameters' values.
 
-        :param y: Output variables' values corresponding to `x`.
+        :param mdata: Evaluation metadata, usually file paths or evaluation IDs.
+
+        A primary ID for the evaluation record (UUID7) is generated automatically.
+        Adding the option to override the primary ID shouldn't cause problems,
+        if it ever becomes necessary.
 
         """
-        # TODO: Do we really need to require an ID?
+        id_ = str(uuid7())
+        self.root["eval"].create_group(id_)
+        self.root["eval"][id_]["x"] = x
 
-        # Consider doing something useful if output already exists but new output
-        # differs from the old.  A model evaluation might differ from run to run
-        # because the evaluation is not fully reproducible (deterministic), the model
-        # definition changed, or the run environment changed.  Only a change in the
-        # model definition is unambiguously a problem.  Best to do this check in the
-        # caller, which has more context.
-
-        # TODO: Allow repeat evals (would force change in primary key)
-
-        # Call count
-        self.root["eval_info"].create_group(id_)
-        # Call stack
-        outer_frame = inspect.getouterframes(inspect.currentframe())
-        callers = [f.function for f in outer_frame]
-        self.root["eval_info"][id_].create_dataset(
-            "call_chain",
-            dtype=str,
-            shape=(
-                len(
-                    callers,
-                )
-            ),
-        )
-        self.root["eval_info"][id_]["call_chain"] = callers
-        self.root["eval_info"][id_]["x"] = x
-        # Evaluation optional metadata (usually file paths or alternate IDs)
-        for k, v in mdata.items():
-            self.root["eval_info"][id_][k] = v
-        # Create hash ID for parameter values
-        x_hash = self._encode_x(x)
-        # Update map parameter value hash ID → evaluation integer ID.  (One to many.)
-        if x_hash in self.root["eval_id_from_x"]:
-            self.root["eval_id_from_x"][x_hash] = list(
-                self.root["eval_id_from_x"][x_hash]
+        # Update map of parameter value hash ID → eval ID (primary key).  This is a
+        # one-to-many relationship.
+        x_bytes = self._encode_x(x)
+        if x_bytes in self.root["eval_id_from_x"]:
+            self.root["eval_id_from_x"][x_bytes] = list(
+                self.root["eval_id_from_x"][x_bytes]
             ) + [id_]
         else:
-            self.root["eval_id_from_x"][x_hash] = [id_]
-        # Parameters → output values hashmap
+            self.root["eval_id_from_x"][x_bytes] = [id_]
+
+        # Write optional metadata
+        for k, v in mdata.items():
+            self.root["eval"][id_]["metadata"][k] = v
+
+        # Create field to record whether the model evaluation succeeded or failed
+        self.root["eval"][id_]["status"] = ""
+
+        return id_, x_bytes
+
+    def write_eval_error(self, x, error: str, mdata={}):
+        """Store evaluation error for a list of input parameter values
+
+        :param x: Input parameters' values.
+
+        :param error: Error produced when model evaluation was attempted.
+
+        :param mdata: Evaluation metadata, usually file paths or evaluation IDs.
+
+        """
+        id_, _ = self._initialize_eval_record(x, mdata)
+        self.root["eval"][id_]["status"] = error
+        return id_
+
+    def write_eval_output(
+        self, x, y: Union[Dict[str, np.ndarray], np.ndarray], mdata={}
+    ):
+        """Store input & output of a given model evaluation
+
+        :param x: Input parameters' values.
+
+        :param y: Output variables' values corresponding to `x`.  If y is a
+        dictionary, it must have keys matching the variable names provided when the
+        EvaluationDB was initialized.
+
+        :param mdata: Evaluation metadata, usually file paths or evaluation IDs.
+
+        """
+        id_, x_bytes = self._initialize_eval_record(x, mdata)
+        self.root["eval"][id_]["status"] = "Success"
+
+        # Write output variables' values
         if hasattr(y, "__getitem__"):
-            for k in y:
-                self.root["eval_values"].require_group(x_hash, overwrite=True)
-                self.root["eval_values"][x_hash][k] = y[k]
+            y = np.vstack([y[k] for k in self.root["variable_names"]])
         else:
-            self.root["eval_values"][x_hash] = y
+            y = np.atleast_2d(y)
+        n_vars = len(self.root["variable_names"])
+        if y.shape[0] != n_vars:
+            raise ValueError(
+                f"EvaluationDB was initialized to store {n_vars}, but the the provided data has cardinality {y.shape[0]} in its first dimension, which is interpreted as the number of variables."
+            )
+        self.root["eval"][id_]["y"] = y
+        # Since a model evaluation might differ from run to run because the
+        # evaluation is not fully reproducible (in the deterministic sense), we don't
+        # check if the output values for repeated evaluations match.  Better for the
+        # caller to check inconsistencies, since it has more context.
+        return id_
 
 
 class ScipyOptimizationDB:
