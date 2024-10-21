@@ -526,7 +526,7 @@ class Sim:
         if check_failures:
             if raise_on_check_fail:
                 raise CheckError(
-                    f"Sim {self.name} has failed checks: {', '.join([str(e) for e in check_failures])}"
+                    f"Sim {self.name} has failed checks: {', '.join([repr(e) for e in check_failures])}"
                 )
             return check_failures
         return SUCCESS
