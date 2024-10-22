@@ -121,7 +121,7 @@ class EvaluationDB:
         if it ever becomes necessary.
 
         """
-        id_ = str(uuid7())
+        id_ = str(uuid7())  # use str since 128-bit int not supported
         self.root["eval"].create_group(id_)
         self.root["eval"][id_]["x"] = x
 
@@ -304,11 +304,14 @@ class ScipyOptimizationDB:
 
     def write_final_result(self, result: scipy.optimize.OptimizeResult):
         # Write data not part of an intermediate result
-        self.root["final/termination status"] = result["status"]
-        self.root["final"].create_dataset("termination message", dtype=str, shape=0)
-        self.root["final/termination message"] = result["message"]
+        self.root["final/termination_status"] = result["status"]
+        self.root["final/termination_message"] = result["message"]
         # Write data that is part of an intermediate result (includes commit)
         self._write_result_to_group(result, self.root["final"])
+
+    def write_final_error(self, status, message):
+        self.root["final/termination_status"] = status
+        self.root["final/termination_message"] = message
 
     def close(self):
         self.store.close()
