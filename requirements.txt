@@ -1,5 +1,6 @@
 lxml
 matplotlib
+numcodecs
 numdifftools
 numpy
 pandas
@@ -9,3 +10,5 @@ pint
 psutil
 scikit_learn
 scipy
+uuid_utils
+zarr
