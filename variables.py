@@ -40,6 +40,14 @@ class UniformScalar(ContinuousScalar):
         assert self.is_valid(v)
         return v
 
+    def scale(self, v):
+        """Transform value to [0, 1] uniform distribution"""
+        return (v - self.lb) / (self.ub - self.lb)
+
+    def unscale(self, vs):
+        """Transform value from [0, 1] uniform distribution"""
+        return vs * (self.ub - self.lb) + self.lb
+
 
 class LogUniformScalar(ContinuousScalar):
     def __init__(self, lb, ub, **kwargs):
@@ -63,6 +71,16 @@ class LogUniformScalar(ContinuousScalar):
         v = 10 ** ((1 - r) * np.log10(self.lb) + r * np.log10(self.ub))
         assert self.is_valid(v)
         return v
+
+    def scale(self, v):
+        """Transform value to [0, 1] uniform distribution"""
+        return (np.log10(v) - np.log10(self.lb)) / (
+            np.log10(self.ub) - np.log10(self.lb)
+        )
+
+    def unscale(self, vs):
+        """Transform value from [0, 1] uniform distribution"""
+        return 10 ** (vs * (np.log10(self.ub) - np.log10(self.lb)) + np.log10(self.lb))
 
 
 class CategoricalScalar(Scalar):
