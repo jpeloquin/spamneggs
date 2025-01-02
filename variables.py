@@ -24,9 +24,9 @@ class UniformScalar(ContinuousScalar):
         self.ub = ub
 
     def is_valid(self, value):
-        if value < self.lb:
+        if np.any(value < self.lb):
             return False
-        if value > self.ub:
+        if np.any(value > self.ub):
             return False
         return True
 
@@ -34,8 +34,8 @@ class UniformScalar(ContinuousScalar):
         levels = np.linspace(self.lb, self.ub, n)
         return levels
 
-    def sample(self):
-        r = uniform.rvs(0, 1)  # uniform on [0, 1]
+    def sample(self, n=1, seed=None):
+        r = uniform.rvs(0, 1, n, random_state=seed)  # uniform on [0, 1]
         v = (1 - r) * self.lb + r * self.ub
         assert self.is_valid(v)
         return v
@@ -48,9 +48,9 @@ class LogUniformScalar(ContinuousScalar):
         self.ub = ub
 
     def is_valid(self, value):
-        if value < self.lb:
+        if np.any(value < self.lb):
             return False
-        if value > self.ub:
+        if np.any(value > self.ub):
             return False
         return True
 
@@ -58,10 +58,11 @@ class LogUniformScalar(ContinuousScalar):
         levels = 10 ** np.linspace(np.log10(self.lb), np.log10(self.ub), n)
         return levels
 
-    def sample(self):
-        r = uniform.rvs(0, 1)  # uniform on [0, 1]
+    def sample(self, n=1, seed=None):
+        r = uniform.rvs(0, 1, n, random_state=seed)  # uniform on [0, 1]
         v = 10 ** ((1 - r) * np.log10(self.lb) + r * np.log10(self.ub))
         assert self.is_valid(v)
+        return v
 
 
 class CategoricalScalar(Scalar):
