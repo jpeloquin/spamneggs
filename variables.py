@@ -36,7 +36,32 @@ class UniformScalar(ContinuousScalar):
 
     def sample(self):
         r = uniform.rvs(0, 1)  # uniform on [0, 1]
-        return (1 - r) * self.lb + r * self.ub
+        v = (1 - r) * self.lb + r * self.ub
+        assert self.is_valid(v)
+        return v
+
+
+class LogUniformScalar(ContinuousScalar):
+    def __init__(self, lb, ub, **kwargs):
+        super().__init__(**kwargs)
+        self.lb = lb
+        self.ub = ub
+
+    def is_valid(self, value):
+        if value < self.lb:
+            return False
+        if value > self.ub:
+            return False
+        return True
+
+    def sensitivity_levels(self, n):
+        levels = 10 ** np.linspace(np.log10(self.lb), np.log10(self.ub), n)
+        return levels
+
+    def sample(self):
+        r = uniform.rvs(0, 1)  # uniform on [0, 1]
+        v = 10 ** ((1 - r) * np.log10(self.lb) + r * np.log10(self.ub))
+        assert self.is_valid(v)
 
 
 class CategoricalScalar(Scalar):
