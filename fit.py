@@ -333,10 +333,10 @@ def plot_fit_vs_iteration_1d(
     N = len(parameters) + 1  # +1 for cost
     ny = ceil(N / 6)
     nx = ceil(N / ny)
-    ax_w = 3.0
-    ax_h = 2.4
+    ax_w = 3.2
+    ax_h = 2.2
     fig = Figure(figsize=(nx * ax_w, 2 * ny * ax_h))
-    gs = GridSpec(ny, nx, figure=fig)
+    gs = GridSpec(ny, nx, wspace=0.46, figure=fig)
 
     PlotCell = namedtuple("PlotCell", ["ax_v", "ax_Δ"])
 
