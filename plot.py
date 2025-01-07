@@ -864,3 +864,32 @@ def fig_stacked_line(
             for i_var in range(len(variables)):
                 axarr[i_p + 1, i_var].set_ylim(0, max_ylim[i_var])
     return FigResultAxarr(fig, axarr)
+
+
+def symlog_thresh(x):
+    """Return good symlog transition threshold and ymin/ymax
+
+    ymin is chosen to be the greatest power of 10 lesser than min(x).
+
+    ymax is chosen to be the lowest power of 10 greater than max(x).
+
+    """
+    x = np.array(x)
+    # Choose ymax
+    xpos = x[x > 0]
+    if len(xpos) != 0:
+        ymax = 10 ** np.ceil(np.max(np.log10(xpos)))
+    else:
+        ymax = 1
+    # Choose linear → log threshold
+    if np.all(x == 0):
+        thresh = 1
+    else:
+        thresh = np.min(np.abs(x[x != 0]))
+    # Choose ymin
+    xneg = x[x < 0]
+    if len(xneg) != 0:
+        ymin = -(10 ** np.ceil(np.max(np.log10(-xneg))))
+    else:
+        ymin = 0
+    return ymin, thresh, ymax
