@@ -66,6 +66,7 @@ class EvaluationDB:
         self.root.require_group("eval")
         # Map of parameter value hash → evaluation integer ID.  (One to many.)
         self.root.require_group("eval_id_from_x")
+        # TODO: add initialized sentinel
         return self
 
     @classmethod
@@ -224,6 +225,7 @@ class ScipyOptimizationDB:
         self.root.create_group("setup")
         self.root.create_group("iterations")
         self.root.create_group("final")
+        # TODO: add initialized sentinel
         return self
 
     def make_scipy_callback(self):
