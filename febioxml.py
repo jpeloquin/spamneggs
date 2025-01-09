@@ -222,7 +222,7 @@ def parse_var_selector(text):
     if len(groups) == 2:
         time_text = groups[1].strip()
         m_time = re.match(
-            "(?P<time_enum>time|step)" "\s*=\s*" "(?P<range>\d+[\S\s]*)", time_text
+            r"(?P<time_enum>time|step)\s*=\s*(?P<range>\d+[\S\s]*)", time_text
         )
         var_info["time_enum"] = m_time["time_enum"]
         bounds = [v.strip() for v in m_time["range"].split("to")]
