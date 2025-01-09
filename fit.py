@@ -3,11 +3,12 @@
 """
 
 import base64
-import struct
-import weakref
 from collections import namedtuple
 from math import ceil
+from pathlib import Path
+import struct
 from typing import Optional, List, Dict, Union
+import weakref
 
 import numcodecs
 import numpy as np
@@ -33,29 +34,39 @@ class EvaluationDB:
 
     """
 
-    def __init__(self, pth, parameters: List[str], variables: List[str], mode="a"):
-        """Return EvaluationDB backed by Zarr DirectoryStore
+    def __init__(self, store, mode="r"):
+        """Return EvaluationDB backed by Zarr storage
 
-        :param mode: Passed to zarr.open.  Default = "a", which means read/write,
-        create if the file doesn't exist.  Read-only is "r".
+        :param store: Store or path to directory.  Passed unmodified to zarr.open.
+
+        :param mode: Passed to zarr.open.  Read-only = "r" (default).  Read/write,
+        create if the file doesn't exist = "a".  For other modes see zarr.open.
 
         A Zarr DirectoryStore can be written to by multiple threads or processes,
-        but there is no mechanism to prevent two writes from modifying the same chunk
-        at the same time.
+        but it has no mechanism to prevent two writes from modifying the same chunk
+        at the same time.  It contains many small files, which may cause performance
+        problems on some file systems.
+
+        A Zarr ZipStore can be written to by multiple threads, but not multiple
+        processes.  Existing entries cannot be removed or replaced.  Therefore,
+        ZipStore is not currently supported.
 
         """
-        self.store = zarr.DirectoryStore(pth)
-        self.root = zarr.open(self.store, mode=mode)
-        if not self.root.read_only:
-            # List of parameter names
-            self.root["parameter_names"] = parameters
-            # List of variable names
-            self.root["variable_names"] = variables
-            # Map of eval ID → eval record for one model evaluation
-            self.root.require_group("eval")
-            # Map of parameter value hash → evaluation integer ID.  (One to many.)
-            self.root.require_group("eval_id_from_x")
+        self.root = zarr.open(store, mode=mode)
+        self.store = self.root.store
+        self._finalizer = weakref.finalize(self, self.root.chunk_store.close)
         self._finalizer = weakref.finalize(self, self.store.close)
+
+    def init(self, parameters: List[str], variables: List[str]):
+        # List of parameter names
+        self.root["parameter_names"] = parameters
+        # List of variable names
+        self.root["variable_names"] = variables
+        # Map of eval ID → eval record for one model evaluation
+        self.root.require_group("eval")
+        # Map of parameter value hash → evaluation integer ID.  (One to many.)
+        self.root.require_group("eval_id_from_x")
+        return self
 
     @classmethod
     def _encode_x(cls, x):
@@ -80,7 +91,7 @@ class EvaluationDB:
 
     def get_eval_ids(self):
         """Return all evaluation IDs"""
-        return sorted([int(i) for i in self.root["eval"].keys()])
+        return list(self.root["eval"].keys())
 
     def get_evals(self, x):
         """Return evaluation records for parameter values"""
@@ -185,14 +196,35 @@ class ScipyOptimizationDB:
 
     """
 
-    def __init__(self, pth, mode="r"):
-        self.store = zarr.DirectoryStore(pth)
-        self.root = zarr.open(self.store, mode=mode)
-        if not self.root.read_only:
-            self.root.create_group("problem")
-            self.root.create_group("setup")
-            self.root.create_group("iterations")
-            self.root.create_group("final")
+    def __init__(self, store, mode="r"):
+        """Return ScipyOptimizationDB backed by Zarr storage
+
+        :param store: Store or path to directory.  Passed unmodified to zarr.open.
+
+        :param mode: Passed to zarr.open.  Read-only = "r" (default).  Read/write,
+        create if the file doesn't exist = "a".  For other modes see zarr.open.
+
+        A Zarr DirectoryStore can be written to by multiple threads or processes,
+        but it has no mechanism to prevent two writes from modifying the same chunk
+        at the same time.  It contains many small files, which may cause performance
+        problems on some file systems.
+
+        A Zarr ZipStore can be written to by multiple threads, but not multiple
+        processes.  Existing entries cannot be removed or replaced.  Therefore,
+        ZipStore is not currently supported.
+
+        """
+        self.root = zarr.open(store, mode=mode)
+        self.store = self.root.store
+        self._finalizer = weakref.finalize(self, self.root.chunk_store.close)
+        self._finalizer = weakref.finalize(self, self.store.close)
+
+    def init(self):
+        self.root.create_group("problem")
+        self.root.create_group("setup")
+        self.root.create_group("iterations")
+        self.root.create_group("final")
+        return self
 
     def make_scipy_callback(self):
         """Return a callback function for scipy.optimize.minimize"""
