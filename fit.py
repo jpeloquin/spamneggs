@@ -6,6 +6,7 @@ import base64
 from collections import namedtuple
 from math import ceil
 from pathlib import Path
+import shutil
 import struct
 from typing import Optional, List, Dict, Union
 import weakref
@@ -455,3 +456,23 @@ def plot_fit_vs_iteration_1d(
         for ax in ax_group:
             ax.sharex(ax_cost.ax_v)
     return fig, ax_by_param
+
+
+def convert_zarr_store(src, dest):
+    """Convert a Zarr store to another store
+
+    The source store will be closed and deleted.  (If you want to preserve the source
+    store, just zarr.copy_store.)  This function is most often used to convert a
+    DirectoryStore to a ZipStore.  A DirectoryStore often contains thousands of tiny
+    files, which can degrade system performance in some circumstances.
+
+    """
+    if isinstance(src, str) or isinstance(src, Path):
+        pth_src = src
+    else:
+        # Zarr Store
+        pth_src = src.path
+    zarr.copy_store(src, dest)
+    if hasattr(src, "close"):
+        src.close()
+    shutil.rmtree(pth_src)
