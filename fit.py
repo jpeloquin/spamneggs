@@ -468,11 +468,14 @@ def convert_zarr_store(src, dest):
 
     """
     if isinstance(src, str) or isinstance(src, Path):
-        pth_src = src
+        pth_src = Path(src)
     else:
         # Zarr Store
-        pth_src = src.path
+        pth_src = Path(src.path)
     zarr.copy_store(src, dest)
     if hasattr(src, "close"):
         src.close()
-    shutil.rmtree(pth_src)
+    if pth_src.is_dir():
+        shutil.rmtree(pth_src)
+    else:
+        pth_src.unlink()
