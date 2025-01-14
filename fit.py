@@ -418,10 +418,8 @@ def plot_fit_vs_iteration_1d(
         "Cost" if norm_cost is None else "Norm. Cost",
     )
     # Only apply log scale if we are dealing with multiple orders of magnitude
-    ymin, logthresh, ymax = symlog_thresh(iterations["fun value"])
-    with np.errstate(divide="ignore"):
-        set_log_scale = max(np.log10(-ymin), np.log10(ymax)) - np.log10(logthresh) > 1
-    if set_log_scale:
+    ymin, logthresh, ymax, oom = symlog_thresh(iterations["fun value"])
+    if oom > 1:
         ax_cost.ax_v.set_yscale("symlog", linthresh=logthresh)
     # Add true parameter values if available
     if "x_true" in db.root["setup"]:

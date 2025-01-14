@@ -892,4 +892,7 @@ def symlog_thresh(x):
         ymin = -(10 ** np.ceil(np.max(np.log10(-xneg))))
     else:
         ymin = 0
-    return ymin, thresh, ymax
+    # Orders of magnitude spanned by the log part
+    with np.errstate(divide="ignore"):
+        oom = max(np.log10(-ymin), np.log10(ymax)) - np.log10(thresh)
+    return ymin, thresh, ymax, oom
