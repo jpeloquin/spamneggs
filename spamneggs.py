@@ -1559,7 +1559,7 @@ def makefig_error_pdf_biparam(analysis):
                 m = np.logical_and(
                     cases[parameter1.name] == level1, cases[parameter2.name] == level2
                 )
-                x[i, j, :] = (levels1[i], levels2[i])
+                x[i, j, :] = (levels1[i], levels2[j])
                 n = np.sum(m)
                 if n == 0:
                     p[i, j] = np.nan
