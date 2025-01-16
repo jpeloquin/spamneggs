@@ -13,6 +13,9 @@ class ContinuousScalar(Scalar):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+    def to_tuple(self):
+        return self.__class__.__name__, self.lb, self.ub
+
     def sensitivity_levels(self, n):
         raise NotImplementedError
 
