@@ -1,2 +1,2 @@
 from .spamneggs import *
-from . import febioxml, local, plot
+from . import febioxml, local, plot, variables
