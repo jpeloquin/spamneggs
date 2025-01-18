@@ -77,6 +77,8 @@ class LogUniformScalar(ContinuousScalar):
 
     def scale(self, v):
         """Transform value to [0, 1] uniform distribution"""
+        if v == 0:
+            return -np.inf
         return (np.log10(v) - np.log10(self.lb)) / (
             np.log10(self.ub) - np.log10(self.lb)
         )
