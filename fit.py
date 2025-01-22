@@ -452,19 +452,24 @@ def plot_fit_vs_iteration_1d(
     return fig, ax_by_param
 
 
-def convert_zarr_store(src, dest):
+def convert_zarr_store(
+    src: zarr.storage.MutableMapping, dest: zarr.storage.MutableMapping
+):
     """Convert a Zarr store to another store
 
-    The source store will be closed and deleted.  (If you want to preserve the source
-    store, just zarr.copy_store.)  This function is most often used to convert a
-    DirectoryStore to a ZipStore.  A DirectoryStore often contains thousands of tiny
-    files, which can degrade system performance in some circumstances.
+    The caller is responsible for deleting any pre-existing content at the destination.
+    The source store will be closed and deleted after the copy is complete.  (If you
+    want to preserve the source store, just zarr.copy_store.)  This function is most
+    often used to convert a DirectoryStore to a ZipStore.  A DirectoryStore often
+    contains thousands of tiny files, which can degrade system performance in some
+    circumstances.
 
     """
+    # Get source path so we can delete it later (this probably won't work for in-memory
+    # stores)
     if isinstance(src, str) or isinstance(src, Path):
         pth_src = Path(src)
-    else:
-        # Zarr Store
+    else:  # Zarr Store
         pth_src = Path(src.path)
     zarr.copy_store(src, dest)
     if hasattr(src, "close"):
