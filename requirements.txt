@@ -11,4 +11,4 @@ psutil
 scikit_learn
 scipy
 uuid_utils
-zarr
+zarr<3
