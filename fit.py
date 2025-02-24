@@ -43,6 +43,9 @@ class EvaluationDB:
         :param mode: Passed to zarr.open.  Read-only = "r" (default).  Read/write,
         create if the file doesn't exist = "a".  For other modes see zarr.open.
 
+        The EvaluationDB stores a map of parameter values → output variables' values for
+        many model evaluations.
+
         A Zarr DirectoryStore can be written to by multiple threads or processes,
         but it has no mechanism to prevent two writes from modifying the same chunk
         at the same time.  It contains many small files, which may cause performance
@@ -68,28 +71,33 @@ class EvaluationDB:
         # Map of parameter value hash → evaluation integer ID.  (One to many.)
         self.root.require_group("eval_id_from_x")
         # TODO: add initialized sentinel
+        # Version and compatibility info
+        self.root["hash"] = "FNV-1a"
+        self.version = 1
         return self
 
-    @classmethod
-    def _encode_x(cls, x):
-        """Encode parameter values in byte array
-
-        The byte array is primarily used as a hash/ID to look up the corresponding
-        evaluation data.
-        """
-        bytes_key = struct.pack("<" + "d" * len(x), *x)
-        string_key = base64.encodebytes(bytes_key)
-        return string_key
+    @property
+    def variable_names(self):
+        return tuple(self.root.variable_names)
 
     @classmethod
-    def _decode_x(cls, s):
-        """Decode parameter values from byte array
+    def hash_x(cls, x):
+        """Compute 64-bit FNV-1a hash for parameter array
 
-        The byte array is primarily used as a hash/ID to look up the corresponding
-        evaluation data.
+        :param x: Parameter vector to be hashed.
+
+        The hash algorithm is FNV-1a with standard parameters.
+
         """
-        bytes_key = base64.decodebytes(s)
-        return struct.unpack(f"<{len(bytes_key) // 8}d", bytes_key)
+        x = np.array(x)
+        # algorithm ref: http://isthe.com/chongo/tech/comp/fnv/#FNV-1a
+        sz = 2**64
+        prime = 1099511628211
+        k = 14695981039346656037
+        for b in x.tobytes():
+            k = k ^ b
+            k = (k * prime) % sz  # ensure fixed size
+        return k
 
     def get_eval_ids(self):
         """Return all evaluation IDs"""
@@ -97,15 +105,22 @@ class EvaluationDB:
 
     def get_evals(self, x):
         """Return evaluation records for parameter values"""
-        x_bytes = self._encode_x(x)
-        ids = self.root["eval_id_from_x"][x_bytes]
-        return {id_: self.root["eval"][id_] for id_ in ids}
+        x = np.array(x)
+        h = f"{self.hash_x(x):x}"
+        evals = {}
+        for id_ in self.root["eval_id_from_x"][h]:
+            x_e = np.array(self.root["eval"][id_]["x"])
+            if np.all(x_e == x):
+                evals[id_] = self.root["eval"][id_]
+        return evals
 
     def get_eval_output(self, x):
         """Return output variables' values for parameter values"""
-        x_bytes = self._encode_x(x)
-        ids = self.root["eval_id_from_x"][x_bytes]
-        return {id_: self.root["eval"][id_]["y"] for id_ in ids}
+        evals = self.get_evals(x)
+        return {
+            id_: {v: e["y"][i] for i, v in enumerate(self.variable_names)}
+            for id_, e in evals.items()
+        }
 
     def add_eval(self, x, mdata={}) -> str:
         """Initialize a record for a new evaluation
@@ -128,15 +143,15 @@ class EvaluationDB:
         eval_: zarr.Group = self.root["eval"].create_group(id_)
         eval_["x"] = x
 
-        # Update map of parameter value hash ID → eval ID (primary key).  This is a
+        # Update hash map of parameter value → eval ID (primary key).  This is a
         # one-to-many relationship.
-        x_bytes = self._encode_x(x)
-        if x_bytes in self.root["eval_id_from_x"]:
-            self.root["eval_id_from_x"][x_bytes] = list(
-                self.root["eval_id_from_x"][x_bytes]
-            ) + [id_]
+        h = f"{self.hash_x(x):x}"
+        if h in self.root["eval_id_from_x"]:
+            self.root["eval_id_from_x"][h] = list(self.root["eval_id_from_x"][h]) + [
+                id_
+            ]
         else:
-            self.root["eval_id_from_x"][x_bytes] = [id_]
+            self.root["eval_id_from_x"][h] = [id_]
 
         # Write optional metadata
         eval_.create_group("metadata")
