@@ -105,6 +105,8 @@ class EvaluationDB:
 
     def get_evals(self, x):
         """Return evaluation records for parameter values"""
+        if not hasattr(self, "version"):
+            return self.get_evals_v0(x)
         x = np.array(x)
         h = f"{self.hash_x(x):x}"
         evals = {}
@@ -113,6 +115,13 @@ class EvaluationDB:
             if np.all(x_e == x):
                 evals[id_] = self.root["eval"][id_]
         return evals
+
+    def get_evals_v0(self, x):
+        """Return evaluation records for parameter values for a version 0 db"""
+        bytes_key = struct.pack("<" + "d" * len(x), *x)
+        string_key = base64.encodebytes(bytes_key)
+        ids = self.root["eval_id_from_x"][string_key]
+        return {id_: self.root["eval"][id_] for id_ in ids}
 
     def get_eval_output(self, x):
         """Return output variables' values for parameter values"""
