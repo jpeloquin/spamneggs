@@ -73,12 +73,16 @@ class EvaluationDB:
         # TODO: add initialized sentinel
         # Version and compatibility info
         self.root["hash"] = "FNV-1a"
-        self.version = 1
+        self.root["version"] = 1
         return self
 
     @property
     def variable_names(self):
         return tuple(self.root.variable_names)
+
+    @property
+    def version(self):
+        return self.root.get("version", 0)
 
     @classmethod
     def hash_x(cls, x):
@@ -105,8 +109,13 @@ class EvaluationDB:
 
     def get_evals(self, x):
         """Return evaluation records for parameter values"""
-        if not hasattr(self, "version"):
-            return self.get_evals_v0(x)
+        if self.version == 0:
+            return self._get_evals_v0(x)
+        else:
+            return self._get_evals_v1(x)
+
+    def _get_evals_v1(self, x):
+        """Return evaluation records for parameter values for a version 1 db"""
         x = np.array(x)
         h = f"{self.hash_x(x):x}"
         evals = {}
@@ -116,7 +125,7 @@ class EvaluationDB:
                 evals[id_] = self.root["eval"][id_]
         return evals
 
-    def get_evals_v0(self, x):
+    def _get_evals_v0(self, x):
         """Return evaluation records for parameter values for a version 0 db"""
         bytes_key = struct.pack("<" + "d" * len(x), *x)
         string_key = base64.encodebytes(bytes_key)
