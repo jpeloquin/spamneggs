@@ -1,6 +1,4 @@
-"""Functions related to model fitting (optimization)
-
-"""
+"""Functions related to model fitting (optimization)"""
 
 import base64
 from collections import namedtuple
