@@ -23,6 +23,12 @@ from spamneggs.util import Counter
 from spamneggs.plot import symlog_thresh, remove_spines, FONTSIZE_TICKLABEL
 
 
+class VerificationError(Exception):
+    """Raise when a spamneggs database fails an internal consistency check"""
+
+    pass
+
+
 class EvaluationDB:
     """Log model evaluations
 
@@ -137,6 +143,20 @@ class EvaluationDB:
             id_: {v: e["y"][i] for i, v in enumerate(self.variable_names)}
             for id_, e in evals.items()
         }
+
+    def verify(self):
+        """Check EvaluationDB for internal consistency"""
+        for k, e in self.root["eval"].items():
+            x = np.array(e["x"])
+            try:
+                matches = self.get_evals(x)
+            except KeyError as err:
+                raise VerificationError(
+                    f"{self.store.path} has inconsistent keys."
+                ) from err
+            assert k in matches.keys()
+            for e2 in matches.values():
+                assert np.array_equal(x, e2["x"])
 
     def add_eval(self, x, mdata={}) -> str:
         """Initialize a record for a new evaluation
@@ -369,6 +389,34 @@ class ScipyOptimizationDB:
         self.store.close()
 
 
+def convert_zarr_store(
+    src: zarr.storage.MutableMapping, dest: zarr.storage.MutableMapping
+):
+    """Convert a Zarr store to another store
+
+    The caller is responsible for deleting any pre-existing content at the destination.
+    The source store will be closed and deleted after the copy is complete.  (If you
+    want to preserve the source store, just zarr.copy_store.)  This function is most
+    often used to convert a DirectoryStore to a ZipStore.  A DirectoryStore often
+    contains thousands of tiny files, which can degrade system performance in some
+    circumstances.
+
+    """
+    # Get source path so we can delete it later (this probably won't work for in-memory
+    # stores)
+    if isinstance(src, str) or isinstance(src, Path):
+        pth_src = Path(src)
+    else:  # Zarr Store
+        pth_src = Path(src.path)
+    zarr.copy_store(src, dest)
+    if hasattr(src, "close"):
+        src.close()
+    if pth_src.is_dir():
+        shutil.rmtree(pth_src)
+    else:
+        pth_src.unlink()
+
+
 def plot_fit_vs_iteration_1d(
     db: ScipyOptimizationDB,
     parameter_constants={},
@@ -481,31 +529,3 @@ def plot_fit_vs_iteration_1d(
         for ax in ax_group:
             ax.sharex(ax_cost.ax_v)
     return fig, ax_by_param
-
-
-def convert_zarr_store(
-    src: zarr.storage.MutableMapping, dest: zarr.storage.MutableMapping
-):
-    """Convert a Zarr store to another store
-
-    The caller is responsible for deleting any pre-existing content at the destination.
-    The source store will be closed and deleted after the copy is complete.  (If you
-    want to preserve the source store, just zarr.copy_store.)  This function is most
-    often used to convert a DirectoryStore to a ZipStore.  A DirectoryStore often
-    contains thousands of tiny files, which can degrade system performance in some
-    circumstances.
-
-    """
-    # Get source path so we can delete it later (this probably won't work for in-memory
-    # stores)
-    if isinstance(src, str) or isinstance(src, Path):
-        pth_src = Path(src)
-    else:  # Zarr Store
-        pth_src = Path(src.path)
-    zarr.copy_store(src, dest)
-    if hasattr(src, "close"):
-        src.close()
-    if pth_src.is_dir():
-        shutil.rmtree(pth_src)
-    else:
-        pth_src.unlink()
