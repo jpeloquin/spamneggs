@@ -6,6 +6,12 @@ import pint
 ureg = pint.get_application_registry()
 
 
+class VerificationError(Exception):
+    """Raise when a spamneggs database fails an internal consistency check"""
+
+    pass
+
+
 class Parameter:
     """A random parameter with optional reference levels."""
 

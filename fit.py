@@ -20,14 +20,9 @@ from matplotlib.gridspec import GridSpec
 from uuid_utils import uuid7
 import zarr
 
+from .core import VerificationError
 from spamneggs.util import Counter
 from spamneggs.plot import symlog_thresh, remove_spines, FONTSIZE_TICKLABEL
-
-
-class VerificationError(Exception):
-    """Raise when a spamneggs database fails an internal consistency check"""
-
-    pass
 
 
 class EvaluationDB:
@@ -82,7 +77,11 @@ class EvaluationDB:
         return self
 
     @property
-    def variable_names(self):
+    def parameters(self):
+        return tuple(self.root.parameter_names)
+
+    @property
+    def variables(self):
         return tuple(self.root.variable_names)
 
     @property
@@ -141,9 +140,24 @@ class EvaluationDB:
         """Return output variables' values for parameter values"""
         evals = self.get_evals(x)
         return {
-            id_: {v: e["y"][i] for i, v in enumerate(self.variable_names)}
+            id_: {v: e["y"][i] for i, v in enumerate(self.variables)}
             for id_, e in evals.items()
         }
+
+    def copy(self, dest: zarr.storage.StoreLike):
+        """Copy evaluations to a new EvaluationDB
+
+        :param dest: New Zarr store, which will be overwritten.
+
+        """
+        db = EvaluationDB(dest, mode="w")
+        db.init(self.parameters, self.variables)
+        for k, e in self.root.eval.items():
+            i = db.add_eval(e.x, mdata=e.metadata)
+            if str(np.array(e.status)) == "Success":
+                db.write_eval_output(i, e.y)
+            else:
+                db.write_eval_error(i, e.status)
 
     def verify(self):
         """Check EvaluationDB for internal consistency"""
@@ -217,7 +231,7 @@ class EvaluationDB:
             y = np.vstack([y[k] for k in self.variables])
         else:
             y = np.atleast_2d(y)
-        n_vars = len(self.root["variable_names"])
+        n_vars = len(self.variables)
         if y.shape[0] != n_vars:
             raise ValueError(
                 f"EvaluationDB was initialized to store {n_vars}, but the the provided data has cardinality {y.shape[0]} in its first dimension, which is interpreted as the number of variables."
