@@ -1,6 +1,7 @@
 """Functions related to model fitting (optimization)"""
 
 import base64
+import collections
 from collections import namedtuple
 from math import ceil
 from pathlib import Path
@@ -212,8 +213,8 @@ class EvaluationDB:
         self.root["eval"][id_]["status"] = "Success"
 
         # Write output variables' values
-        if hasattr(y, "__getitem__"):
-            y = np.vstack([y[k] for k in self.root["variable_names"]])
+        if isinstance(y, collections.abc.Mapping):
+            y = np.vstack([y[k] for k in self.variables])
         else:
             y = np.atleast_2d(y)
         n_vars = len(self.root["variable_names"])
