@@ -1023,60 +1023,17 @@ def run_sensitivity(
     CaseGenerationError, or running a simulation raises .
 
     """
-    # Validate `on_error` argument
     if isinstance(on_error, str):
         on_error = OnSimError.from_str(on_error)
 
     # ProcessPool allows parallel model generation but is worse than ThreadPool for
     # debugging.  ThreadPool is fine when the parallel work is all in FEBio.
-    pool = ProcessPool(nodes=num_workers)
-    # Set waffleiron to run FEBio with only 1 thread, since we'll be running one
-    # FEBio process per core
-    wfl.febio.FEBIO_THREADS_DEFAULT = 1
-
-    # Define samples
-    named = {
-        name: cleanup_levels_units(levels, analysis.parameters)
-        for name, levels in named_levels.items()
-    }
-    sampled = full_factorial_values(analysis.parameters, distributions, nlevels)
-
-    # Define sims
-    generators = {g.name: g for g in analysis.generators}
-    sims = [
-        (
-            (group, g.name, ix),
-            g.define_sim(ix, sample, directory=g.directory / group),
+    with ProcessPool(nodes=num_workers) as pool:
+        # Generate and run the simulations
+        table, sims = generate_sims(
+            analysis, distributions, nlevels, named_levels, on_error, pool
         )
-        for group, samples in (
-            ("named", named),
-            ("sampled", sampled),
-        )
-        for ix, sample in samples.items()
-        for g in analysis.generators
-    ]
-
-    # Generate named sims
-    def f_gen(tag, sim):
-        generator = generators[tag[1]]
-        try:
-            generator.generate_sim(sim)
-        except CaseGenerationError as err:
-            print(f"Sim {tag}:\n")
-            traceback.print_exc()
-            print()
-            return tag, err
-        return tag, SUCCESS
-
-    output = do_parallel(sims, f_gen, on_error=on_error, pool=pool)
-    table = sims_table(analysis, sims)
-    _update_table_status(table, output, step="Generate")
-    analysis.write_sims_table(table)
-
-    # Run the cases
-    output = do_parallel(sims, run_sim, on_error=on_error, pool=pool)
-    _update_table_status(table, output, step="Run")
-    analysis.write_sims_table(table)
+        run_sims(analysis, table, sims, on_error, pool)
 
     # Check if error terminations prevent analysis of results
     table = table.reset_index()
@@ -1103,9 +1060,83 @@ def run_sensitivity(
                     f"Because there was at least one simulation had an error and `on_case_error` = 'stop', the sensitivity analysis was stopped after the first simulation error, before running all cases."
                 )
                 sys.exit()
+
     # Tabulate and plot the results
     tabulate(analysis)
     makefig_sensitivity_all(analysis)
+
+
+def generate_sims(
+    analysis: Analysis,
+    distributions,
+    nlevels,
+    named_levels={},
+    on_error=OnSimError.STOP,
+    pool=None,
+):
+    """Generate simulations for sensitivity analysis"""
+    if isinstance(on_error, str):
+        on_error = OnSimError.from_str(on_error)
+
+    # Define samples
+    named = {
+        name: cleanup_levels_units(levels, analysis.parameters)
+        for name, levels in named_levels.items()
+    }
+    sampled = full_factorial_values(analysis.parameters, distributions, nlevels)
+
+    # Define sims
+    generators = {g.name: g for g in analysis.generators}
+    sims = [
+        (
+            (group, g.name, ix),
+            g.define_sim(ix, sample, directory=g.directory / group),
+        )
+        for group, samples in (
+            ("named", named),
+            ("sampled", sampled),
+        )
+        for ix, sample in samples.items()
+        for g in analysis.generators
+    ]
+
+    # Generate sims
+    def f_gen(tag, sim):
+        generator = generators[tag[1]]
+        try:
+            generator.generate_sim(sim)
+        except CaseGenerationError as err:
+            print(f"Sim {tag}:\n")
+            traceback.print_exc()
+            print()
+            return tag, err
+        return tag, SUCCESS
+
+    if pool is not None:
+        output = do_parallel(sims, f_gen, on_error=on_error, pool=pool)
+    else:
+        # TODO: refactor do_parallel
+        raise NotImplementedError
+    table = sims_table(analysis, sims)
+    _update_table_status(table, output, step="Generate")
+    analysis.write_sims_table(table)
+    return table, sims
+
+
+def run_sims(analysis, table, sims, on_error=OnSimError.STOP, pool=None):
+    """Run sensitivity analysis simulations"""
+    # Set waffleiron to run FEBio with only 1 thread, since we'll be running one FEBio
+    # process per core.  This should probably be configurable.
+    wfl.febio.FEBIO_THREADS_DEFAULT = 1
+
+    # Run the cases
+    if pool is not None:
+        output = do_parallel(sims, run_sim, on_error=on_error, pool=pool)
+    else:
+        # TODO: refactor do_parallel
+        raise NotImplementedError
+    _update_table_status(table, output, step="Run")
+    analysis.write_sims_table(table)
 
 
 def get_rep_sample(analysis):
